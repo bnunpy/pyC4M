@@ -93,6 +93,12 @@ print(settings.get("conditional"))
 
 The DataFrame returned by `CCM(..., conditional=...)` stores metadata in `df.attrs["Settings"]` and `df.attrs["BaseCorrelations"]`.
 
+Column meanings:
+
+- `x_on_y`, `y_on_x`: conditional CCM causality ratios (variance reduction when the cross-map is added to the regression).
+- `var_x_with_cross`, `var_y_with_cross`: residual variances after including the cross-map alongside the conditioning set.
+- `var_x_conditionals`, `var_y_conditionals`: residual variances using only the conditioning variables.
+
 
 Monte-Carlo style diagnostics matching the MATLAB reference (`var_*` entries) are exposed via the `diagnostics` dictionaries returned for every pair.
 

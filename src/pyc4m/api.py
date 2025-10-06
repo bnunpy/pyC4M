@@ -67,10 +67,17 @@ def CCM(
     if validLib:
         raise NotImplementedError("CCM(): validLib is not supported")
 
-    if tau == 0:
+    try:
+        tau_value = -1 if tau is None else int(tau)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("CCM(): tau must be an integer") from exc
+
+    if tau_value == 0:
         raise RuntimeError("CCM(): tau must be non-zero")
     if E <= 0:
         raise RuntimeError("CCM(): embedding dimension E must be positive")
+
+    tau = tau_value
 
     try:
         tp_value = 0 if Tp is None else int(Tp)
