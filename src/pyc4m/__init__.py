@@ -1,6 +1,6 @@
-"""Extensions to pyEDM providing causalized and conditional CCM."""
+"""pyC4M public API."""
 
-from .api import CCM, conditional, CausalizedCCMRun
+from .api import CCM, CausalizedCCMRun, conditional
 from .cccm import causalized_ccm
 from .conditional import conditional_ccm
 

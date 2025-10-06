@@ -41,7 +41,7 @@ class CCMTests(unittest.TestCase):
 
         result = CCM(
             dataFrame=frame,
-            source="x",
+            columns="x",
             target="y",
             libSizes=[120, 180],
             E=2,
@@ -52,7 +52,7 @@ class CCMTests(unittest.TestCase):
         self.assertListEqual(list(result.columns), ["LibSize", "x:y", "y:x"])
         self.assertEqual(len(result), 2)
 
-    def test_api_ccm_include_data(self):
+    def test_api_ccm_includeData(self):
         t = np.linspace(0, 4 * np.pi, 180)
         x = np.sin(t)
         y = np.roll(x, 1)
@@ -60,7 +60,7 @@ class CCMTests(unittest.TestCase):
 
         output = CCM(
             dataFrame=frame,
-            source="x",
+            columns="x",
             target="y",
             libSizes="120 160 20",
             E=2,
@@ -82,7 +82,7 @@ class CCMTests(unittest.TestCase):
 
         result_one = CCM(
             dataFrame=frame,
-            source="x",
+            columns="x",
             target="y",
             libSizes=[180, 220],
             E=3,
@@ -94,7 +94,7 @@ class CCMTests(unittest.TestCase):
 
         result_two = CCM(
             dataFrame=frame,
-            source="x",
+            columns="x",
             target="y",
             libSizes=[180, 220],
             E=3,
@@ -112,7 +112,7 @@ class CCMTests(unittest.TestCase):
 
         stats = CCM(
             dataFrame=frame,
-            source="x",
+            columns="x",
             target="y",
             libSizes=[180, 220],
             E=3,
@@ -133,7 +133,7 @@ class CCMTests(unittest.TestCase):
 
         baseline = CCM(
             dataFrame=frame,
-            source="x",
+            columns="x",
             target="y",
             libSizes=[200],
             E=3,
@@ -143,12 +143,12 @@ class CCMTests(unittest.TestCase):
 
         excluded = CCM(
             dataFrame=frame,
-            source="x",
+            columns="x",
             target="y",
             libSizes=[200],
             E=3,
             tau=1,
-            exclusion_radius=12,
+            exclusionRadius=12,
             num_skip=5,
         )
 
@@ -168,7 +168,7 @@ class CCMTests(unittest.TestCase):
             e_dim=3,
             pairs=[(0, 1)],
             num_skip=5,
-            exclusion_radius=3,
+            exclusionRadius=3,
         )
 
         self.assertIn((0, 1), result.pair_results)
@@ -181,7 +181,7 @@ class CCMTests(unittest.TestCase):
 
         causal_result = CCM(
             dataFrame=frame,
-            source="x",
+            columns="x",
             target="y",
             libSizes=[220],
             E=3,
@@ -191,7 +191,7 @@ class CCMTests(unittest.TestCase):
 
         non_causal_result = CCM(
             dataFrame=frame,
-            source="x",
+            columns="x",
             target="y",
             libSizes=[220],
             E=3,
@@ -284,7 +284,7 @@ class CCMTests(unittest.TestCase):
 
         result = CCM(
             dataFrame=frame,
-            source="x",
+            columns="x",
             target="y",
             libSizes=[180, 220],
             E=2,
@@ -302,7 +302,7 @@ class CCMTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             CCM(
                 dataFrame=frame,
-                source="x",
+                columns="x",
                 target="y",
                 libSizes=[20],
                 E=2,
@@ -319,7 +319,7 @@ class CCMTests(unittest.TestCase):
 
         result = CCM(
             dataFrame=frame,
-            source="x",
+            columns="x",
             target="y",
             conditional="z",
             tau=1,
@@ -327,16 +327,26 @@ class CCMTests(unittest.TestCase):
             num_skip=5,
         )
 
-        self.assertIn("Conditional", result)
-        cond_df = result["Conditional"]
-        self.assertEqual(cond_df.loc[0, "source"], "x")
-        self.assertEqual(cond_df.loc[0, "target"], "y")
-        self.assertEqual(cond_df.loc[0, "conditional"], ["z"])
+        self.assertIsInstance(result, pd.DataFrame)
+        self.assertListEqual(list(result.columns), [
+            "source",
+            "target",
+            "conditional",
+            "x_on_y",
+            "y_on_x",
+            "var_x_with_cross",
+            "var_x_conditionals",
+            "var_y_with_cross",
+            "var_y_conditionals",
+        ])
+        self.assertEqual(result.loc[0, "source"], "x")
+        self.assertEqual(result.loc[0, "target"], "y")
+        self.assertEqual(result.loc[0, "conditional"], ["z"])
 
-        settings = result["Settings"]
-        self.assertEqual(settings["source"], "x")
-        self.assertEqual(settings["target"], "y")
-        self.assertEqual(settings["conditional"], ["z"])
+        settings = result.attrs.get("Settings", {})
+        self.assertEqual(settings.get("source"), "x")
+        self.assertEqual(settings.get("target"), "y")
+        self.assertEqual(settings.get("conditional"), ["z"])
 
 
 

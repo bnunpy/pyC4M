@@ -1,4 +1,4 @@
-"""Drop-in replacements for selected pyEDM API calls using causalized CCM."""
+"""pyC4M public API: CCM wrappers compatible with pyEDM naming."""
 
 from __future__ import annotations
 
@@ -18,30 +18,25 @@ from .conditional import conditional_ccm
 
 @dataclass
 class CausalizedCCMRun:
-    """Minimal object mimicking :class:`pyEDM.CCM` returnObject payload."""
+    """Object returned when ``returnObject=True`` mimicking pyEDM layout."""
 
     libMeans: pd.DataFrame
     PredictStats1: pd.DataFrame | None
     PredictStats2: pd.DataFrame | None
-
-    # A few attributes kept for compatibility with user code that
-    # inspects the CCM object.
     name: str = "CausalizedCCM"
 
 
 def CCM(
     dataFrame = None,
-    source: str | Sequence[str] = "",
+    columns: str | Sequence[str] = "",
     target: str | Sequence[str] = "",
-    libSizes: Iterable[int] | str = "",
-    lib_sizes: Iterable[int] | str | None = None,
+    libSizes: Iterable[int] | str | None = None,
     sample: int = 0,
     E: int = 0,
     Tp: int = 0,
     knn: int = 0,
     tau: int = -1,
     exclusionRadius: int | None = None,
-    exclusion_radius: int | None = None,
     seed = None,
     embedded: bool = False,
     validLib: Sequence[int] | None = None,
@@ -53,10 +48,9 @@ def CCM(
     returnObject: bool = False,
     causal: bool = True,
     conditional: str | Sequence[str] | None = None,
-    columns: str | Sequence[str] | None = None,
     **kwargs,
 ):
-    """Causalized convergent cross mapping with a pyEDM-compatible API."""
+    """Convergent cross mapping with optional causalisation and conditioning."""
 
     if dataFrame is None:
         raise RuntimeError("CCM(): dataFrame must be provided")
@@ -66,13 +60,15 @@ def CCM(
     elif hasattr(dataFrame, "to_frame"):
         df = dataFrame.to_frame()
     else:
-        raise RuntimeError("CCM(): dataFrame must be pandas DataFrame like")
+        raise RuntimeError("CCM(): dataFrame must be a pandas DataFrame")
 
     if embedded:
         raise NotImplementedError("CCM(): embedded=True is not yet supported")
     if validLib:
         raise NotImplementedError("CCM(): validLib is not supported")
-    tau = 1 if tau is None or tau <= 0 else tau
+
+    if tau == 0:
+        raise RuntimeError("CCM(): tau must be non-zero")
     if E <= 0:
         raise RuntimeError("CCM(): embedding dimension E must be positive")
 
@@ -81,37 +77,15 @@ def CCM(
     except (TypeError, ValueError) as exc:
         raise RuntimeError("CCM(): Tp must be an integer") from exc
 
-    if exclusion_radius is not None and exclusionRadius is not None:
-        raise RuntimeError("CCM(): specify only one of exclusion_radius or exclusionRadius")
-
-    exclusion_param = exclusion_radius if exclusion_radius is not None else exclusionRadius
-
-    try:
-        exclusion_radius_value = 0 if exclusion_param is None else int(exclusion_param)
-    except (TypeError, ValueError) as exc:
-        raise RuntimeError("CCM(): exclusion_radius must be an integer") from exc
-    if exclusion_radius_value < 0:
-        raise RuntimeError("CCM(): exclusion_radius must be non-negative")
-
-    if lib_sizes is not None and (libSizes not in ("", [])):
-        raise RuntimeError("CCM(): specify only one of lib_sizes or libSizes")
-
-    lib_sizes_param = lib_sizes if lib_sizes is not None else libSizes
-
-    if not isinstance(causal, (bool, np.bool_)):
-        raise RuntimeError("CCM(): causal must be a boolean")
-
-    if columns is not None and source:
-        raise RuntimeError("CCM(): use 'source' (snake_case) instead of 'columns'")
-    if columns is not None and not source:
-        source = columns
-
-    source_col = _first(source, "source")
-    target_col = _first(target, "target")
-
-    for col in [source_col, target_col]:
-        if col not in df.columns:
-            raise RuntimeError(f"CCM(): column '{col}' not found in dataFrame")
+    if exclusionRadius is None:
+        exclusion_radius_value = 0
+    else:
+        try:
+            exclusion_radius_value = int(exclusionRadius)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("CCM(): exclusionRadius must be an integer") from exc
+        if exclusion_radius_value < 0:
+            raise RuntimeError("CCM(): exclusionRadius must be non-negative")
 
     num_skip = kwargs.pop("num_skip", 10)
     epsilon = kwargs.pop("epsilon", 1e-12)
@@ -119,20 +93,44 @@ def CCM(
         unexpected = ", ".join(kwargs.keys())
         raise TypeError(f"CCM(): unexpected keyword arguments: {unexpected}")
 
+    source_col = _first(columns, "columns")
+    target_col = _first(target, "target")
+
+    for column_name in [source_col, target_col]:
+        if column_name not in df.columns:
+            raise RuntimeError(f"CCM(): column '{column_name}' not found in dataFrame")
+
+    if libSizes is None or libSizes == "":
+        lib_sizes_arg = [len(df)]
+    else:
+        lib_sizes_arg = libSizes
+
+    sample_count = int(sample)
+    if sample_count < 0:
+        raise RuntimeError("CCM(): sample must be non-negative")
+    if sample_count == 0:
+        sample_count = 1
+
+    try:
+        causal_flag = bool(causal)
+    except Exception as exc:  # pylint: disable=broad-except
+        raise RuntimeError("CCM(): causal must be boolean") from exc
+
     if conditional is not None:
         if isinstance(conditional, str):
             conditional_cols = [conditional]
         elif IsIterable(conditional):
-            conditional_cols = [str(c) for c in conditional]
+            conditional_cols = [str(col) for col in conditional]
         else:
             raise RuntimeError("CCM(): conditional must be a string or sequence of strings")
 
-        all_columns = [source_col, target_col] + conditional_cols
-        for col in conditional_cols:
-            if col not in df.columns:
-                raise RuntimeError(f"CCM(): conditional column '{col}' not found in dataFrame")
+        for column_name in conditional_cols:
+            if column_name not in df.columns:
+                raise RuntimeError(f"CCM(): conditional column '{column_name}' not found in dataFrame")
 
+        all_columns = [source_col, target_col] + conditional_cols
         subset = df[all_columns].to_numpy(dtype=float)
+
         cond_result = conditional_ccm(
             subset,
             tau=tau,
@@ -140,8 +138,9 @@ def CCM(
             pairs=[(0, 1)],
             num_skip=num_skip,
             exclusion_radius=exclusion_radius_value,
-            causal=causal,
+            causal=causal_flag,
         )
+
         cond_result.settings.update(
             {
                 "source": source_col,
@@ -152,32 +151,38 @@ def CCM(
         )
 
         records = []
-        for (src_idx, tgt_idx), result in cond_result.pair_results.items():
-            record = {
-                "source": all_columns[src_idx],
-                "target": all_columns[tgt_idx],
-                "conditional": conditional_cols,
-                "x_on_y": result.x_on_y,
-                "y_on_x": result.y_on_x,
-                "var_x_with_cross": result.diagnostics["var_x_with_cross"],
-                "var_x_conditionals": result.diagnostics["var_x_conditionals"],
-                "var_y_with_cross": result.diagnostics["var_y_with_cross"],
-                "var_y_conditionals": result.diagnostics["var_y_conditionals"],
-            }
-            records.append(record)
+        for (src_idx, tgt_idx), pair_result in cond_result.pair_results.items():
+            records.append(
+                {
+                    "source": all_columns[src_idx],
+                    "target": all_columns[tgt_idx],
+                    "conditional": conditional_cols,
+                    "x_on_y": pair_result.x_on_y,
+                    "y_on_x": pair_result.y_on_x,
+                    "var_x_with_cross": pair_result.diagnostics["var_x_with_cross"],
+                    "var_x_conditionals": pair_result.diagnostics["var_x_conditionals"],
+                    "var_y_with_cross": pair_result.diagnostics["var_y_with_cross"],
+                    "var_y_conditionals": pair_result.diagnostics["var_y_conditionals"],
+                }
+            )
 
         conditional_df = pd.DataFrame(records)
+        conditional_df.attrs["Settings"] = cond_result.settings
+        conditional_df.attrs["BaseCorrelations"] = cond_result.base_correlations
 
-        return {
-            "Conditional": conditional_df,
-            "Settings": cond_result.settings,
-            "BaseCorrelations": cond_result.base_correlations,
-        }
+        return conditional_df
 
     series_x = df[source_col].to_numpy(dtype=float)
     series_y = df[target_col].to_numpy(dtype=float)
 
-    parsed_lib_sizes = _parse_lib_sizes(lib_sizes_param, len(df), E, tau, tp_value)
+    parsed_lib_sizes = _parse_lib_sizes(lib_sizes_arg, len(df), E, tau, tp_value)
+
+    embed_gap = (E - 1) * abs(tau)
+    available_vectors = len(series_x) - embed_gap - abs(tp_value)
+    if available_vectors <= 1:
+        raise RuntimeError("CCM(): insufficient data for the requested embedding")
+
+    total_vectors = np.arange(available_vectors, dtype=int)
 
     if verbose:
         print(
@@ -193,61 +198,32 @@ def CCM(
     forward_stats: List[Dict[str, float]] = []
     reverse_stats: List[Dict[str, float]] = []
 
-    total_points = len(series_x)
-    if total_points != len(series_y):
-        raise RuntimeError("CCM(): source and target must be equal length")
-
-    t_offset = 1 + (E - 1) * tau
-    n_vectors_total = total_points - t_offset + 1
-    if n_vectors_total <= 1:
-        raise RuntimeError("CCM(): insufficient points for the requested embedding")
-
-    try:
-        sample_count = int(sample)
-    except (TypeError, ValueError) as exc:
-        raise RuntimeError("CCM(): sample must be an integer") from exc
-    if sample_count < 0:
-        raise RuntimeError("CCM(): sample must be non-negative")
-    if sample_count == 0:
-        sample_count = 1
-
     rng = default_rng(seed)
     skip_base = max(1, num_skip)
-    if skip_base >= n_vectors_total:
-        skip_base = max(1, n_vectors_total - 1)
-        if verbose:
-            print(
-                f"Adjusting num_skip to {skip_base} for dataset (available vectors={n_vectors_total})"
-            )
-
-    tail_x = series_x[t_offset - 1 :]
-    tail_y = series_y[t_offset - 1 :]
+    if skip_base >= available_vectors:
+        skip_base = max(1, available_vectors - 1)
 
     for lib_size in parsed_lib_sizes:
-        lib_emb = lib_size - (E - 1) * tau
-        if lib_emb <= 0:
+        lib_vectors = lib_size - embed_gap - abs(tp_value)
+        if lib_vectors <= 1:
             raise RuntimeError(
-                f"CCM(): library size {lib_size} is too small for embedding E={E}, tau={tau}"
+                f"CCM(): library size {lib_size} is too small for embedding E={E}, tau={tau}, Tp={tp_value}"
             )
-
-        lib_emb = min(lib_emb, n_vectors_total)
-        abs_tp = abs(tp_value)
-        if lib_emb <= abs_tp:
+        if lib_vectors > available_vectors:
             raise RuntimeError(
-                f"CCM(): library size {lib_size} yields only {lib_emb} embedding vectors, "
-                f"which is <= |Tp|={abs_tp}. Increase libSizes or reduce |Tp|."
+                f"CCM(): library size {lib_size} exceeds available length {available_vectors + embed_gap + abs(tp_value)}"
             )
 
         rho_xy_samples = []
         rho_yx_samples = []
 
         for sample_index in range(sample_count):
-            if sample_count == 1 or sample_index == 0:
-                library_idx = np.arange(lib_emb, dtype=int)
+            if sample_index == 0:
+                library_idx = total_vectors[:lib_vectors]
             else:
-                library_idx = np.sort(rng.choice(n_vectors_total, size=lib_emb, replace=False))
+                library_idx = np.sort(rng.choice(total_vectors, size=lib_vectors, replace=False))
 
-            skip = min(skip_base, max(1, lib_emb - 1))
+            skip = min(skip_base, max(1, lib_vectors - 1))
 
             result = causalized_ccm(
                 series_x,
@@ -259,23 +235,25 @@ def CCM(
                 tp=tp_value,
                 library_indices=library_idx,
                 exclusion_radius=exclusion_radius_value,
-                causal=causal,
+                causal=causal_flag,
             )
 
             rho_xy_samples.append(result.correlation_y)
             rho_yx_samples.append(result.correlation_x)
 
             if includeData:
-                valid_slice = slice(skip - 1, None)
-                obs_y = tail_y[valid_slice]
-                pred_y = result.y_estimates[valid_slice]
-                err_y = ComputeError(obs_y, pred_y, digits=6)
+                start = skip - 1
+                obs_y = series_y[start:]
+                pred_y = result.y_estimates[start:]
+                length_y = min(len(obs_y), len(pred_y))
+                err_y = ComputeError(obs_y[:length_y], pred_y[:length_y], digits=6)
                 err_y["LibSize"] = lib_size
                 err_y["Sample"] = sample_index
 
-                obs_x = tail_x[valid_slice]
-                pred_x = result.x_estimates[valid_slice]
-                err_x = ComputeError(obs_x, pred_x, digits=6)
+                obs_x = series_x[start:]
+                pred_x = result.x_estimates[start:]
+                length_x = min(len(obs_x), len(pred_x))
+                err_x = ComputeError(obs_x[:length_x], pred_x[:length_x], digits=6)
                 err_x["LibSize"] = lib_size
                 err_x["Sample"] = sample_index
 
@@ -325,8 +303,7 @@ def conditional(
     e_dim: int = 3,
     pairs: Sequence[Sequence[int]] | None = None,
     num_skip: int = 10,
-    exclusion_radius: int = 0,
-    exclusionRadius: int | None = None,
+    exclusionRadius: int = 0,
     causal: bool = True,
 ):
     """Wrapper around :func:`conditional_ccm` using pandas column lookup."""
@@ -335,12 +312,6 @@ def conditional(
         raise RuntimeError("conditional(): dataFrame must be provided")
     if pairs is None:
         raise RuntimeError("conditional(): pairs must be provided")
-
-    if exclusionRadius is not None and exclusion_radius != 0:
-        raise RuntimeError("conditional(): specify only one of exclusion_radius or exclusionRadius")
-
-    if exclusionRadius is not None:
-        exclusion_radius = exclusionRadius
 
     if not isinstance(dataFrame, pd.DataFrame):
         dataFrame = pd.DataFrame(dataFrame)
@@ -352,7 +323,7 @@ def conditional(
         e_dim=e_dim,
         pairs=pairs,
         num_skip=num_skip,
-        exclusion_radius=exclusion_radius,
+        exclusion_radius=exclusionRadius,
         causal=causal,
     )
 
@@ -376,21 +347,20 @@ def _first(value, name: str) -> str:
     raise RuntimeError(f"CCM(): {name} must be specified")
 
 
-def _parse_lib_sizes(libSizes, data_length: int, E: int, tau: int, tp: int) -> List[int]:
-    if not libSizes:
+def _parse_lib_sizes(lib_sizes, data_length: int, E: int, tau: int, tp: int) -> List[int]:
+    if not lib_sizes:
         lib_sizes = [data_length]
-    elif isinstance(libSizes, str):
-        parts = [int(x) for x in libSizes.split()]
+    elif isinstance(lib_sizes, str):
+        parts = [int(x) for x in lib_sizes.split()]
         lib_sizes = _expand(parts)
-    elif IsIterable(libSizes):
-        lib_sizes = _expand([int(x) for x in libSizes])
+    elif IsIterable(lib_sizes):
+        lib_sizes = _expand([int(x) for x in lib_sizes])
     else:
-        lib_sizes = [int(libSizes)]
+        lib_sizes = [int(lib_sizes)]
 
-    required = max(1 + (E - 1) * tau, E + 2)
+    embed_gap = (E - 1) * abs(tau)
     abs_tp = abs(tp)
-    tp_adjusted_requirement = (E - 1) * tau + abs_tp + 1
-    minimum_size = max(required, tp_adjusted_requirement)
+    minimum_size = embed_gap + abs_tp + 2
 
     lib_sizes = sorted(set(lib_sizes))
     for size in lib_sizes:
