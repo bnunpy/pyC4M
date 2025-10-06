@@ -41,7 +41,7 @@ class CCMTests(unittest.TestCase):
 
         result = CCM(
             dataFrame=frame,
-            columns="x",
+            source="x",
             target="y",
             libSizes=[120, 180],
             E=2,
@@ -60,7 +60,7 @@ class CCMTests(unittest.TestCase):
 
         output = CCM(
             dataFrame=frame,
-            columns="x",
+            source="x",
             target="y",
             libSizes="120 160 20",
             E=2,
@@ -82,7 +82,7 @@ class CCMTests(unittest.TestCase):
 
         result_one = CCM(
             dataFrame=frame,
-            columns="x",
+            source="x",
             target="y",
             libSizes=[180, 220],
             E=3,
@@ -94,7 +94,7 @@ class CCMTests(unittest.TestCase):
 
         result_two = CCM(
             dataFrame=frame,
-            columns="x",
+            source="x",
             target="y",
             libSizes=[180, 220],
             E=3,
@@ -112,7 +112,7 @@ class CCMTests(unittest.TestCase):
 
         stats = CCM(
             dataFrame=frame,
-            columns="x",
+            source="x",
             target="y",
             libSizes=[180, 220],
             E=3,
@@ -133,7 +133,7 @@ class CCMTests(unittest.TestCase):
 
         baseline = CCM(
             dataFrame=frame,
-            columns="x",
+            source="x",
             target="y",
             libSizes=[200],
             E=3,
@@ -143,7 +143,7 @@ class CCMTests(unittest.TestCase):
 
         excluded = CCM(
             dataFrame=frame,
-            columns="x",
+            source="x",
             target="y",
             libSizes=[200],
             E=3,
@@ -181,7 +181,7 @@ class CCMTests(unittest.TestCase):
 
         causal_result = CCM(
             dataFrame=frame,
-            columns="x",
+            source="x",
             target="y",
             libSizes=[220],
             E=3,
@@ -191,7 +191,7 @@ class CCMTests(unittest.TestCase):
 
         non_causal_result = CCM(
             dataFrame=frame,
-            columns="x",
+            source="x",
             target="y",
             libSizes=[220],
             E=3,
@@ -284,7 +284,7 @@ class CCMTests(unittest.TestCase):
 
         result = CCM(
             dataFrame=frame,
-            columns="x",
+            source="x",
             target="y",
             libSizes=[180, 220],
             E=2,
@@ -302,7 +302,7 @@ class CCMTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             CCM(
                 dataFrame=frame,
-                columns="x",
+                source="x",
                 target="y",
                 libSizes=[20],
                 E=2,
@@ -310,6 +310,28 @@ class CCMTests(unittest.TestCase):
                 Tp=25,
                 num_skip=5,
             )
+    def test_ccm_conditional_argument(self):
+        t = np.linspace(0, 4 * np.pi, 240)
+        x = np.sin(t)
+        y = np.roll(x, 2)
+        z = np.cos(0.5 * t)
+        frame = pd.DataFrame({"x": x, "y": y, "z": z})
+
+        result = CCM(
+            dataFrame=frame,
+            source="x",
+            target="y",
+            conditional="z",
+            tau=1,
+            E=3,
+            num_skip=5,
+        )
+
+        self.assertIn((0, 1), result.pair_results)
+        self.assertEqual(result.settings["source"], "x")
+        self.assertEqual(result.settings["target"], "y")
+        self.assertEqual(result.settings["conditional"], ["z"])
+
 
 
 if __name__ == "__main__":

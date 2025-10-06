@@ -31,9 +31,10 @@ class CausalizedCCMRun:
 
 def CCM(
     dataFrame = None,
-    columns: str | Sequence[str] = "",
+    source: str | Sequence[str] = "",
     target: str | Sequence[str] = "",
     libSizes: Iterable[int] | str = "",
+    lib_sizes: Iterable[int] | str | None = None,
     sample: int = 0,
     E: int = 0,
     Tp: int = 0,
@@ -51,6 +52,8 @@ def CCM(
     showPlot: bool = False,
     returnObject: bool = False,
     causal: bool = True,
+    conditional: str | Sequence[str] | None = None,
+    columns: str | Sequence[str] | None = None,
     **kwargs,
 ):
     """Causalized convergent cross mapping with a pyEDM-compatible API."""
@@ -90,26 +93,25 @@ def CCM(
     if exclusion_radius_value < 0:
         raise RuntimeError("CCM(): exclusion_radius must be non-negative")
 
+    if lib_sizes is not None and (libSizes not in ("", [])):
+        raise RuntimeError("CCM(): specify only one of lib_sizes or libSizes")
+
+    lib_sizes_param = lib_sizes if lib_sizes is not None else libSizes
+
     if not isinstance(causal, (bool, np.bool_)):
         raise RuntimeError("CCM(): causal must be a boolean")
 
-    c_col = _first(columns, "columns")
-    t_col = _first(target, "target")
+    if columns is not None and source:
+        raise RuntimeError("CCM(): use 'source' (snake_case) instead of 'columns'")
+    if columns is not None and not source:
+        source = columns
 
-    if c_col not in df.columns:
-        raise RuntimeError(f"CCM(): column '{c_col}' not found in dataFrame")
-    if t_col not in df.columns:
-        raise RuntimeError(f"CCM(): target '{t_col}' not found in dataFrame")
+    source_col = _first(source, "source")
+    target_col = _first(target, "target")
 
-    series_x = df[c_col].to_numpy(dtype=float)
-    series_y = df[t_col].to_numpy(dtype=float)
-
-    lib_sizes = _parse_lib_sizes(libSizes, len(df), E, tau, tp_value)
-
-    if verbose:
-        print(
-            f"Causalized CCM evaluating libSizes={lib_sizes} with E={E}, tau={tau}, Tp={tp_value}"
-        )
+    for col in [source_col, target_col]:
+        if col not in df.columns:
+            raise RuntimeError(f"CCM(): column '{col}' not found in dataFrame")
 
     num_skip = kwargs.pop("num_skip", 10)
     epsilon = kwargs.pop("epsilon", 1e-12)
@@ -117,10 +119,53 @@ def CCM(
         unexpected = ", ".join(kwargs.keys())
         raise TypeError(f"CCM(): unexpected keyword arguments: {unexpected}")
 
+    if conditional is not None:
+        if isinstance(conditional, str):
+            conditional_cols = [conditional]
+        elif IsIterable(conditional):
+            conditional_cols = [str(c) for c in conditional]
+        else:
+            raise RuntimeError("CCM(): conditional must be a string or sequence of strings")
+
+        all_columns = [source_col, target_col] + conditional_cols
+        for col in conditional_cols:
+            if col not in df.columns:
+                raise RuntimeError(f"CCM(): conditional column '{col}' not found in dataFrame")
+
+        subset = df[all_columns].to_numpy(dtype=float)
+        cond_result = conditional_ccm(
+            subset,
+            tau=tau,
+            e_dim=E,
+            pairs=[(0, 1)],
+            num_skip=num_skip,
+            exclusion_radius=exclusion_radius_value,
+            causal=causal,
+        )
+        cond_result.settings.update(
+            {
+                "source": source_col,
+                "target": target_col,
+                "conditional": conditional_cols,
+                "columns": all_columns,
+            }
+        )
+        return cond_result
+
+    series_x = df[source_col].to_numpy(dtype=float)
+    series_y = df[target_col].to_numpy(dtype=float)
+
+    parsed_lib_sizes = _parse_lib_sizes(lib_sizes_param, len(df), E, tau, tp_value)
+
+    if verbose:
+        print(
+            f"Causalized CCM evaluating libSizes={parsed_lib_sizes} with E={E}, tau={tau}, Tp={tp_value}"
+        )
+
     lib_means: Dict[str, List[float]] = {
         "LibSize": [],
-        f"{c_col}:{t_col}": [],
-        f"{t_col}:{c_col}": [],
+        f"{source_col}:{target_col}": [],
+        f"{target_col}:{source_col}": [],
     }
 
     forward_stats: List[Dict[str, float]] = []
@@ -128,7 +173,7 @@ def CCM(
 
     total_points = len(series_x)
     if total_points != len(series_y):
-        raise RuntimeError("CCM(): columns and target must be equal length")
+        raise RuntimeError("CCM(): source and target must be equal length")
 
     t_offset = 1 + (E - 1) * tau
     n_vectors_total = total_points - t_offset + 1
@@ -156,7 +201,7 @@ def CCM(
     tail_x = series_x[t_offset - 1 :]
     tail_y = series_y[t_offset - 1 :]
 
-    for lib_size in lib_sizes:
+    for lib_size in parsed_lib_sizes:
         lib_emb = lib_size - (E - 1) * tau
         if lib_emb <= 0:
             raise RuntimeError(
@@ -192,7 +237,6 @@ def CCM(
                 tp=tp_value,
                 library_indices=library_idx,
                 exclusion_radius=exclusion_radius_value,
-            
                 causal=causal,
             )
 
@@ -217,8 +261,8 @@ def CCM(
                 reverse_stats.append(err_x)
 
         lib_means["LibSize"].append(lib_size)
-        lib_means[f"{c_col}:{t_col}"].append(float(np.nanmean(rho_xy_samples)))
-        lib_means[f"{t_col}:{c_col}"].append(float(np.nanmean(rho_yx_samples)))
+        lib_means[f"{source_col}:{target_col}"].append(float(np.nanmean(rho_xy_samples)))
+        lib_means[f"{target_col}:{source_col}"].append(float(np.nanmean(rho_yx_samples)))
 
     lib_means_df = pd.DataFrame(lib_means)
 
@@ -228,7 +272,7 @@ def CCM(
     if showPlot:
         ax = lib_means_df.plot(
             "LibSize",
-            [f"{c_col}:{t_col}", f"{t_col}:{c_col}"],
+            [f"{source_col}:{target_col}", f"{target_col}:{source_col}"],
             title=f"E = {E}",
             linewidth=3,
         )

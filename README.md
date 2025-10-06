@@ -1,12 +1,12 @@
 # pyC4M
 
-pyC4M extends [pyEDM](https://github.com/SugiharaLab/pyEDM) with causalized convergent cross mapping (cCCM) and its multivariate conditional variant from the `CCM-Implement` MATLAB toolbox. The public API mirrors `pyEDM.CCM()`, so existing code can switch to the causalised implementation with only an import change.
+pyC4M extends [pyEDM](https://github.com/SugiharaLab/pyEDM) with causalized convergent cross mapping (cCCM) and the multivariate conditional variant from the `CCM-Implement` MATLAB toolbox. Its public API mirrors `pyEDM.CCM()`, allowing existing code to switch to the causalised implementation with only an import change.
 
 Key features:
 
 - Causalised CCM with an optional standard (non-causal) mode via `causal=False`.
-- Multivariate conditional CCM built on the same projections.
-- Support for familiar keywords (`Tp`, `lib_sizes`, `exclusion_radius`, `include_data`, `sample`, `seed`). Default behaviour matches the causalised MATLAB implementation.
+- Multivariate conditional CCM built on the same projections; invoke it either through the dedicated helper (`conditional_ccm`) or by passing `conditional=...` to `CCM`.
+- Support for familiar keywords (`Tp`, `lib_sizes`, `exclusion_radius`, `include_data`, `sample`, `seed`). Default behaviour matches the causalised MATLAB implementation while camelCase aliases remain supported for compatibility.
 - Random library resampling that automatically averages correlations across replicates, mirroring pyEDM.
 
 Install in editable mode for development:
@@ -47,7 +47,7 @@ import pandas as pd
 frame = pd.DataFrame({"x": x, "y": y})
 lib_means = CCM(
     dataFrame=frame,
-    columns="x",
+    source="x",
     target="y",
     lib_sizes=[150, 250],
     E=3,
@@ -60,7 +60,7 @@ lib_means = CCM(
 # standard (non-causal) CCM for comparison
 lib_means_noncausal = CCM(
     dataFrame=frame,
-    columns="x",
+    source="x",
     target="y",
     lib_sizes=[150, 250],
     E=3,
@@ -74,6 +74,18 @@ z = np.cos(np.linspace(0, 4 * np.pi, 500))
 data = np.column_stack([x, y, z])
 cond_result = conditional_ccm(data, tau=1, e_dim=3, pairs=[(0, 1)])
 print(cond_result.pair_results[(0, 1)].x_on_y)
+
+# or via the CCM wrapper
+cond_wrapper = CCM(
+    dataFrame=pd.DataFrame({"x": x, "y": y, "z": z}),
+    source="x",
+    target="y",
+    conditional="z",
+    tau=1,
+    E=3,
+    num_skip=5,
+)
+print(cond_wrapper.pair_results[(0, 1)].x_on_y)
 ```
 
 Monte-Carlo style diagnostics matching the MATLAB reference (`var_*` entries) are exposed via the `diagnostics` dictionaries returned for every pair.
