@@ -85,7 +85,7 @@ cond_wrapper = CCM(
     E=3,
     num_skip=5,
 )
-print(cond_wrapper.pair_results[(0, 1)].x_on_y)
+print(cond_wrapper["Conditional"]["x_on_y"].iloc[0])
 ```
 
 Monte-Carlo style diagnostics matching the MATLAB reference (`var_*` entries) are exposed via the `diagnostics` dictionaries returned for every pair.

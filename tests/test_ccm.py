@@ -327,10 +327,16 @@ class CCMTests(unittest.TestCase):
             num_skip=5,
         )
 
-        self.assertIn((0, 1), result.pair_results)
-        self.assertEqual(result.settings["source"], "x")
-        self.assertEqual(result.settings["target"], "y")
-        self.assertEqual(result.settings["conditional"], ["z"])
+        self.assertIn("Conditional", result)
+        cond_df = result["Conditional"]
+        self.assertEqual(cond_df.loc[0, "source"], "x")
+        self.assertEqual(cond_df.loc[0, "target"], "y")
+        self.assertEqual(cond_df.loc[0, "conditional"], ["z"])
+
+        settings = result["Settings"]
+        self.assertEqual(settings["source"], "x")
+        self.assertEqual(settings["target"], "y")
+        self.assertEqual(settings["conditional"], ["z"])
 
 
 

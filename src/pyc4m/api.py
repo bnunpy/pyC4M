@@ -150,7 +150,29 @@ def CCM(
                 "columns": all_columns,
             }
         )
-        return cond_result
+
+        records = []
+        for (src_idx, tgt_idx), result in cond_result.pair_results.items():
+            record = {
+                "source": all_columns[src_idx],
+                "target": all_columns[tgt_idx],
+                "conditional": conditional_cols,
+                "x_on_y": result.x_on_y,
+                "y_on_x": result.y_on_x,
+                "var_x_with_cross": result.diagnostics["var_x_with_cross"],
+                "var_x_conditionals": result.diagnostics["var_x_conditionals"],
+                "var_y_with_cross": result.diagnostics["var_y_with_cross"],
+                "var_y_conditionals": result.diagnostics["var_y_conditionals"],
+            }
+            records.append(record)
+
+        conditional_df = pd.DataFrame(records)
+
+        return {
+            "Conditional": conditional_df,
+            "Settings": cond_result.settings,
+            "BaseCorrelations": cond_result.base_correlations,
+        }
 
     series_x = df[source_col].to_numpy(dtype=float)
     series_y = df[target_col].to_numpy(dtype=float)
