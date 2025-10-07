@@ -62,10 +62,15 @@ def CCM(
     else:
         raise RuntimeError("CCM(): dataFrame must be a pandas DataFrame")
 
-    if embedded:
-        raise NotImplementedError("CCM(): embedded=True is not yet supported")
     if validLib:
         raise NotImplementedError("CCM(): validLib is not supported")
+
+    manifold_source = None
+    manifold_target = None
+    manifolds_map = None
+    tails_map = None
+
+    is_embedded = bool(embedded)
 
     try:
         tau_value = -1 if tau is None else int(tau)
@@ -74,7 +79,7 @@ def CCM(
 
     if tau_value == 0:
         raise RuntimeError("CCM(): tau must be non-zero")
-    if E <= 0:
+    if not is_embedded and E <= 0:
         raise RuntimeError("CCM(): embedding dimension E must be positive")
 
     tau = tau_value
@@ -100,17 +105,53 @@ def CCM(
         unexpected = ", ".join(kwargs.keys())
         raise TypeError(f"CCM(): unexpected keyword arguments: {unexpected}")
 
-    source_col = _first(columns, "columns")
-    target_col = _first(target, "target")
-
-    for column_name in [source_col, target_col]:
-        if column_name not in df.columns:
-            raise RuntimeError(f"CCM(): column '{column_name}' not found in dataFrame")
-
     if libSizes is None or libSizes == "":
         lib_sizes_arg = [len(df)]
     else:
         lib_sizes_arg = libSizes
+
+    if is_embedded:
+        source_columns = _as_column_list(columns, "columns")
+        target_columns = _as_column_list(target, "target")
+
+        if E <= 0:
+            E = len(source_columns)
+        if len(source_columns) != E:
+            raise RuntimeError(
+                f"CCM(): number of source columns {len(source_columns)} does not match embedding dimension E={E}"
+            )
+        if len(target_columns) != E:
+            raise RuntimeError(
+                f"CCM(): number of target columns {len(target_columns)} does not match embedding dimension E={E}"
+            )
+
+        for column_name in source_columns + target_columns:
+            if column_name not in df.columns:
+                raise RuntimeError(f"CCM(): column '{column_name}' not found in dataFrame")
+
+        source_col = source_columns[0]
+        target_col = target_columns[0]
+        manifold_source = df[source_columns].to_numpy(dtype=float)
+        manifold_target = df[target_columns].to_numpy(dtype=float)
+        series_x = df[source_columns[0]].to_numpy(dtype=float)
+        series_y = df[target_columns[0]].to_numpy(dtype=float)
+        embed_gap = (E - 1) * abs(tau)
+        raw_length = len(df) + embed_gap
+        parsed_lib_sizes = _parse_lib_sizes(lib_sizes_arg, raw_length, E, tau, tp_value)
+        available_vectors = len(series_x) - abs(tp_value)
+        if available_vectors <= 1:
+            raise RuntimeError("CCM(): insufficient data for the requested embedding")
+
+        total_vectors = np.arange(len(series_x), dtype=int)
+    else:
+        source_col = _first(columns, "columns")
+        target_col = _first(target, "target")
+
+        for column_name in [source_col, target_col]:
+            if column_name not in df.columns:
+                raise RuntimeError(f"CCM(): column '{column_name}' not found in dataFrame")
+        manifold_source = None
+        manifold_target = None
 
     sample_count = int(sample)
     if sample_count < 0:
@@ -129,27 +170,69 @@ def CCM(
         )
 
     if conditional is not None:
-        if isinstance(conditional, str):
-            conditional_cols = [conditional]
-        elif IsIterable(conditional):
-            conditional_cols = [str(col) for col in conditional]
-        else:
-            raise RuntimeError("CCM(): conditional must be a string or sequence of strings")
+        if is_embedded:
+            conditional_sets: List[List[str]] = []
+            if isinstance(conditional, str) or isinstance(conditional, pd.Series):
+                conditional_sets.append(_as_column_list(conditional, "conditional"))
+            elif IsIterable(conditional):
+                for idx, entry in enumerate(conditional):
+                    conditional_sets.append(_as_column_list(entry, f"conditional[{idx}]"))
+            else:
+                raise RuntimeError("CCM(): conditional must be a string or sequence of strings")
 
-        for column_name in conditional_cols:
-            if column_name not in df.columns:
-                raise RuntimeError(f"CCM(): conditional column '{column_name}' not found in dataFrame")
+            for cols in conditional_sets:
+                if len(cols) != E:
+                    raise RuntimeError(
+                        f"CCM(): conditional embedding must supply {E} columns per variable"
+                    )
 
-        all_columns = [source_col, target_col] + conditional_cols
-        subset = df[all_columns].to_numpy(dtype=float)
-        embed_gap = (E - 1) * abs(tau)
-        latent_length = len(subset) - embed_gap
-        if latent_length <= num_skip:
-            raise RuntimeError(
-                "CCM(): insufficient data for the requested embedding and num_skip"
+            variable_column_sets = [source_columns, target_columns] + conditional_sets
+            for col_set in variable_column_sets:
+                for column_name in col_set:
+                    if column_name not in df.columns:
+                        raise RuntimeError(f"CCM(): column '{column_name}' not found in dataFrame")
+
+            conditional_cols = [cols[0] for cols in conditional_sets]
+            all_columns = [source_columns[0], target_columns[0]] + conditional_cols
+            subset = np.column_stack(
+                [df[col_set[0]].to_numpy(dtype=float) for col_set in variable_column_sets]
             )
 
-        parsed_lib_sizes = _parse_lib_sizes(lib_sizes_arg, len(subset), E, tau, 0)
+            manifolds_map = {
+                idx: df[col_set].to_numpy(dtype=float)
+                for idx, col_set in enumerate(variable_column_sets)
+            }
+            tails_map = {
+                idx: df[col_set[0]].to_numpy(dtype=float)
+                for idx, col_set in enumerate(variable_column_sets)
+            }
+
+            embed_gap = (E - 1) * abs(tau)
+            latent_length = len(subset)
+            raw_length = latent_length + embed_gap
+            parsed_lib_sizes = _parse_lib_sizes(lib_sizes_arg, raw_length, E, tau, 0)
+        else:
+            if isinstance(conditional, str):
+                conditional_cols = [conditional]
+            elif IsIterable(conditional):
+                conditional_cols = [str(col) for col in conditional]
+            else:
+                raise RuntimeError("CCM(): conditional must be a string or sequence of strings")
+
+            for column_name in conditional_cols:
+                if column_name not in df.columns:
+                    raise RuntimeError(f"CCM(): conditional column '{column_name}' not found in dataFrame")
+
+            all_columns = [source_col, target_col] + conditional_cols
+            subset = df[all_columns].to_numpy(dtype=float)
+            embed_gap = (E - 1) * abs(tau)
+            latent_length = len(subset) - embed_gap
+            if latent_length <= num_skip:
+                raise RuntimeError(
+                    "CCM(): insufficient data for the requested embedding and num_skip"
+                )
+
+            parsed_lib_sizes = _parse_lib_sizes(lib_sizes_arg, len(subset), E, tau, 0)
 
         total_vectors = np.arange(latent_length, dtype=int)
         rng = default_rng(seed)
@@ -191,9 +274,9 @@ def CCM(
                             rng.choice(total_vectors, size=lib_vectors, replace=False)
                         )
 
-                key = None if library_idx is None else tuple(library_idx.tolist())
-                if key in cached_reconstructions:
-                    cond_result = cached_reconstructions[key]
+                cache_key = (lib_size, ("__full__",) if library_idx is None else tuple(library_idx.tolist()))
+                if cache_key in cached_reconstructions:
+                    cond_result = cached_reconstructions[cache_key]
                 else:
                     cond_result = conditional_ccm(
                         subset,
@@ -204,8 +287,11 @@ def CCM(
                         exclusion_radius=exclusion_radius_value,
                         causal=causal_flag,
                         library_indices=None if library_idx is None else library_idx,
+                        embedded=is_embedded,
+                        manifolds=manifolds_map if is_embedded else None,
+                        tails=tails_map if is_embedded else None,
                     )
-                    cached_reconstructions[key] = cond_result
+                    cached_reconstructions[cache_key] = cond_result
 
                 if base_settings is None:
                     base_settings = dict(cond_result.settings)
@@ -356,17 +442,20 @@ def CCM(
 
         return conditional_df
 
-    series_x = df[source_col].to_numpy(dtype=float)
-    series_y = df[target_col].to_numpy(dtype=float)
+    if not is_embedded:
+        series_x = df[source_col].to_numpy(dtype=float)
+        series_y = df[target_col].to_numpy(dtype=float)
 
-    parsed_lib_sizes = _parse_lib_sizes(lib_sizes_arg, len(df), E, tau, tp_value)
+        parsed_lib_sizes = _parse_lib_sizes(lib_sizes_arg, len(df), E, tau, tp_value)
 
-    embed_gap = (E - 1) * abs(tau)
-    available_vectors = len(series_x) - embed_gap - abs(tp_value)
-    if available_vectors <= 1:
-        raise RuntimeError("CCM(): insufficient data for the requested embedding")
+        embed_gap = (E - 1) * abs(tau)
+        available_vectors = len(series_x) - embed_gap - abs(tp_value)
+        if available_vectors <= 1:
+            raise RuntimeError("CCM(): insufficient data for the requested embedding")
 
-    total_vectors = np.arange(available_vectors, dtype=int)
+        total_vectors = np.arange(available_vectors, dtype=int)
+    else:
+        total_vectors = np.arange(len(series_x), dtype=int)
 
     if verbose:
         print(
@@ -405,13 +494,19 @@ def CCM(
 
         for sample_index in range(sample_count):
             if sample_index == 0:
-                library_idx = total_vectors[:lib_vectors]
+                if lib_vectors == available_vectors:
+                    library_idx = None
+                else:
+                    library_idx = total_vectors[:lib_vectors]
             else:
                 library_idx = np.sort(rng.choice(total_vectors, size=lib_vectors, replace=False))
 
             skip = min(skip_base, max(1, lib_vectors - 1))
 
-            cache_key = (lib_size, tuple(library_idx.tolist()))
+            if library_idx is None:
+                cache_key = (lib_size, ("__full__",))
+            else:
+                cache_key = (lib_size, tuple(library_idx.tolist()))
 
             if cache_key in cached_results:
                 corr_y, corr_x, est_y, est_x = cached_results[cache_key]
@@ -427,6 +522,10 @@ def CCM(
                     library_indices=library_idx,
                     exclusion_radius=exclusion_radius_value,
                     causal=causal_flag,
+                    manifold_x=manifold_source if is_embedded else None,
+                    manifold_y=manifold_target if is_embedded else None,
+                    series_x_tail=series_x if is_embedded else None,
+                    series_y_tail=series_y if is_embedded else None,
                 )
                 corr_y = result.correlation_y
                 corr_x = result.correlation_x
@@ -504,6 +603,7 @@ def conditional(
     num_skip: int = 10,
     exclusionRadius: int = 0,
     causal: bool = False,
+    embedded: bool = False,
 ):
     """Wrapper around :func:`conditional_ccm` using pandas column lookup."""
 
@@ -524,6 +624,7 @@ def conditional(
         num_skip=num_skip,
         exclusion_radius=exclusionRadius,
         causal=causal,
+        embedded=embedded,
     )
 
 
@@ -580,6 +681,25 @@ def _expand(values: List[int]) -> List[int]:
         start, stop, step = values
         return list(range(start, stop + 1, step))
     return values
+
+
+def _as_column_list(value, name: str) -> List[str]:
+    if isinstance(value, str):
+        tokens = value.split()
+        if not tokens:
+            raise RuntimeError(f"CCM(): {name} must contain at least one column name")
+        return tokens
+
+    if IsIterable(value):
+        value_list = [str(item) for item in value]
+        if not value_list:
+            raise RuntimeError(f"CCM(): {name} must contain at least one column name")
+        return value_list
+
+    if value:
+        return [str(value)]
+
+    raise RuntimeError(f"CCM(): {name} must be specified")
 
 
 __all__ = ["CCM", "CausalizedCCMRun", "conditional"]

@@ -5,8 +5,8 @@ pyC4M extends [pyEDM](https://github.com/SugiharaLab/pyEDM) with causalized conv
 Key features:
 
 - pyEDM-compatible CCM wrapper that defaults to the standard (non-causal) mode (`causal=False`); enable causalised dynamics by setting `causal=True` with a negative `tau`.
-- Multivariate conditional CCM built on the same projections; invoke it either through the dedicated helper (`conditional_ccm`) or by passing `conditional=...` to `CCM`, with full support for `libSizes`, `sample`, and `seed`, and per-library means/variances aggregated across resamples.
-- Familiar keywords (`Tp`, `libSizes`, `exclusionRadius`, `includeData`, `sample`, `seed`) are honoured and the default embedding dimension is `E=3`.
+- Multivariate conditional CCM built on the same projections; invoke it either through the dedicated helper (`conditional_ccm`) or by passing `conditional=...` to `CCM`, with full support for `libSizes`, `sample`, and `seed`, and per-library means/variances aggregated across resamples. When you pass `embedded=True`, supply the delay-coordinate columns for each variable (e.g. `columns=['x0','x1']`, `conditional=[["z0","z1"]]`) so the precomputed manifolds are reused directly.
+- Familiar keywords (`Tp`, `libSizes`, `exclusionRadius`, `includeData`, `sample`, `seed`) are honoured, the default embedding dimension is `E=3`, and you can bypass internal embedding with `embedded=True` when supplying pre-built delay blocks.
 - Random library resampling automatically averages correlations and conditional ratios across replicates, mirroring pyEDM.
 
 Install in editable mode for development:
@@ -125,7 +125,7 @@ The goal is API parity with `pyEDM.CCM()` while using the causalized dynamics fr
 
 - `embedded=True` and `validLib` arguments are not yet supported; inputs must be raw time-series columns rather than pre-embedded blocks.
 - `knn` and `noTime` keywords are currently ignored. Causalized CCM still uses `E+1` nearest neighbours without adaptive weighting; temporal exclusion via `exclusionRadius` is implemented.
-- Causalised behaviour requires `causal=True` with negative `tau`; the default settings (`causal=False`, `tau=-1`) reproduce standard CCM while sharing the causalized internals.
+- Causalised behaviour requires `causal=True` with negative `tau`; the default settings (`causal=False`, `tau=-1`) reproduce standard CCM while sharing the causalized internals. `embedded=True` is supported for both base and conditional CCM, letting you memoize delay embeddings manually when you provide the coordinate blocks yourself.
 - Multiprocessing (`pyc4m.CCM(..., returnObject=True)` -> `.Project`) is run sequentially, so large batches may take longer than the native C++ routines.
 - Conditional CCM replicates the MATLAB variance-based diagnostic, but additional options such as variable-specific `N0` or alternate metrics from the MATLAB scripts are not exposed.
 - Random sampling always averages correlations across replicates; visualisation helpers present in `pyEDM` (e.g., `showPlot=True` plots) are generated via pandas/matplotlib only.

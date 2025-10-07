@@ -38,6 +38,9 @@ def conditional_ccm(
     exclusion_radius: int = 0,
     causal: bool = True,
     library_indices: Sequence[int] | None = None,
+    embedded: bool = False,
+    manifolds: Dict[int, np.ndarray] | None = None,
+    tails: Dict[int, np.ndarray] | None = None,
 ) -> ConditionalCCMResult:
     """Compute conditional causalized CCM for the requested column pairs.
 
@@ -66,6 +69,16 @@ def conditional_ccm(
         Subset of reconstructed-state indices to use as the library. Indices
         refer to rows of the embedded manifolds (0-based) after accounting for
         the embedding gap. ``None`` uses the full available library.
+    embedded : bool, optional
+        If ``True`` expect pre-computed manifolds and tail series supplied via
+        ``manifolds`` and ``tails``. When ``False`` the manifolds are built
+        internally from the raw ``data`` columns.
+    manifolds : dict, optional
+        Mapping of variable index to a pre-computed embedding matrix with shape
+        ``(n_samples, e_dim)``. Required when ``embedded=True``.
+    tails : dict, optional
+        Mapping of variable index to the tail (current-time) series used for the
+        regression step. Required when ``embedded=True``.
 
     Returns
     -------
@@ -110,14 +123,48 @@ def conditional_ccm(
     if not isinstance(causal, (bool, np.bool_)):
         raise ValueError("conditional_ccm(): causal must be a boolean")
 
-    embed_gap = (e_dim - 1) * abs(tau_value)
-    latent_length = n_samples - embed_gap
-    if latent_length <= num_skip:
-        raise ValueError(
-            "Time series too short for the requested embedding and num_skip"
-        )
+    embedded_mode = embedded or manifolds is not None or tails is not None
 
-    tail_start = embed_gap if tau_value < 0 else 0
+    if embedded_mode:
+        if manifolds is None or tails is None:
+            raise ValueError(
+                "conditional_ccm(): manifolds and tails must be provided when embedded=True"
+            )
+
+        manifolds = {idx: np.asarray(arr, dtype=float) for idx, arr in manifolds.items()}
+        tails = {idx: np.asarray(arr, dtype=float) for idx, arr in tails.items()}
+
+        for idx in range(n_variables):
+            if idx not in manifolds or idx not in tails:
+                raise ValueError(
+                    f"conditional_ccm(): missing manifold or tail for variable index {idx}"
+                )
+            manifold = manifolds[idx]
+            if manifold.ndim != 2 or manifold.shape[1] != e_dim:
+                raise ValueError(
+                    f"conditional_ccm(): manifold for index {idx} must have shape (n, {e_dim})"
+                )
+            if manifold.shape[0] != n_samples:
+                raise ValueError(
+                    "conditional_ccm(): manifold rows must match provided data length"
+                )
+            if tails[idx].shape[0] != n_samples:
+                raise ValueError(
+                    "conditional_ccm(): tail series length must match manifold rows"
+                )
+
+        embed_gap = (e_dim - 1) * abs(tau_value)
+        latent_length = n_samples
+        tail_start = 0
+    else:
+        embed_gap = (e_dim - 1) * abs(tau_value)
+        latent_length = n_samples - embed_gap
+        if latent_length <= num_skip:
+            raise ValueError(
+                "Time series too short for the requested embedding and num_skip"
+            )
+
+        tail_start = embed_gap if tau_value < 0 else 0
 
     lib_idx: np.ndarray | None
     if library_indices is not None:
@@ -138,16 +185,32 @@ def conditional_ccm(
 
     for i in range(n_variables - 1):
         for j in range(i + 1, n_variables):
-            result = causalized_ccm(
-                data_matrix[:, i],
-                data_matrix[:, j],
-                tau=tau_value,
-                e_dim=e_dim,
-                num_skip=num_skip,
-                exclusion_radius=exclusion_radius,
-                causal=causal,
-                library_indices=lib_idx,
-            )
+            if embedded_mode:
+                result = causalized_ccm(
+                    tails[i],
+                    tails[j],
+                    tau=tau_value,
+                    e_dim=e_dim,
+                    num_skip=num_skip,
+                    exclusion_radius=exclusion_radius,
+                    causal=causal,
+                    library_indices=lib_idx,
+                    manifold_x=manifolds[i],
+                    manifold_y=manifolds[j],
+                    series_x_tail=tails[i],
+                    series_y_tail=tails[j],
+                )
+            else:
+                result = causalized_ccm(
+                    data_matrix[:, i],
+                    data_matrix[:, j],
+                    tau=tau_value,
+                    e_dim=e_dim,
+                    num_skip=num_skip,
+                    exclusion_radius=exclusion_radius,
+                    causal=causal,
+                    library_indices=lib_idx,
+                )
             estimates[i, j, :] = result.y_estimates
             estimates[j, i, :] = result.x_estimates
             correlations[i, j] = result.correlation_y
@@ -157,7 +220,10 @@ def conditional_ccm(
     pair_results: Dict[Tuple[int, int], ConditionalPairResult] = {}
 
     # Actual data aligned with the reconstructed manifold tail.
-    tail_data = data_matrix[tail_start : tail_start + latent_length, :]
+    if embedded_mode:
+        tail_data = data_matrix
+    else:
+        tail_data = data_matrix[tail_start : tail_start + latent_length, :]
     valid_slice = slice(num_skip - 1, None)
 
     for (i, j) in standardized_pairs:
@@ -262,20 +328,17 @@ def _conditional_effect(
 ) -> Tuple[float, float, float]:
     """Return causality ratio and residual variances."""
 
-    predictors_all = np.hstack([conditioning, cross_mapping])
-
-    finite_mask = np.isfinite(target) & np.all(np.isfinite(predictors_all), axis=1)
-    if finite_mask.sum() <= predictors_all.shape[1]:
+    finite_mask = (
+        np.isfinite(target)
+        & np.all(np.isfinite(conditioning), axis=1)
+        & np.isfinite(cross_mapping[:, 0])
+    )
+    if finite_mask.sum() <= conditioning.shape[1] + 1:
         return float('nan'), float('nan'), float('nan')
 
-    predictors_all = predictors_all[finite_mask]
     conditioning = conditioning[finite_mask]
     cross_mapping = cross_mapping[finite_mask]
     target = target[finite_mask]
-
-    coef_all, *_ = np.linalg.lstsq(predictors_all, target, rcond=None)
-    fitted_all = predictors_all @ coef_all
-    err_all = target - fitted_all
 
     if conditioning.shape[1] == 0:
         raise ValueError(
@@ -285,12 +348,23 @@ def _conditional_effect(
     if conditioning.shape[0] <= conditioning.shape[1]:
         return float('nan'), float('nan'), float('nan')
 
-    coef_cond, *_ = np.linalg.lstsq(conditioning, target, rcond=None)
-    fitted_cond = conditioning @ coef_cond
-    err_cond = target - fitted_cond
+    full_design = np.hstack([conditioning, cross_mapping])
 
-    var_all = float(np.var(err_all, ddof=1))
-    var_cond = float(np.var(err_cond, ddof=1))
+    try:
+        gram_full = full_design.T @ full_design
+        coef_all = np.linalg.solve(gram_full, full_design.T @ target)
+    except np.linalg.LinAlgError:
+        coef_all = np.linalg.lstsq(full_design, target, rcond=None)[0]
+    residual_all = target - full_design @ coef_all
+    var_all = float(np.var(residual_all, ddof=1))
+
+    try:
+        gram_cond = conditioning.T @ conditioning
+        coef_cond = np.linalg.solve(gram_cond, conditioning.T @ target)
+    except np.linalg.LinAlgError:
+        coef_cond = np.linalg.lstsq(conditioning, target, rcond=None)[0]
+    residual_cond = target - conditioning @ coef_cond
+    var_cond = float(np.var(residual_cond, ddof=1))
 
     effect = np.nan if var_cond == 0 else (var_cond - var_all) / var_cond
 

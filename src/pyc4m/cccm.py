@@ -43,6 +43,10 @@ def causalized_ccm(
     library_indices: Optional[Sequence[int]] = None,
     exclusion_radius: int = 0,
     causal: bool = True,
+    manifold_x: Optional[np.ndarray] = None,
+    manifold_y: Optional[np.ndarray] = None,
+    series_x_tail: Optional[ArrayLike] = None,
+    series_y_tail: Optional[ArrayLike] = None,
 ) -> CausalizedCCMResult:
     """Compute causalized CCM between two scalar time series.
 
@@ -127,18 +131,41 @@ def causalized_ccm(
             "causalized_ccm(): causal projections require tau < 0 to embed into the past"
         )
 
-    series_length = x_arr.size
-    embed_span = (e_dim - 1) * abs(tau)
-    required = embed_span + 1
-    if required > series_length:
-        raise ValueError(
-            "Embedding exceeds series length: need at least "
-            f"{required} points, received {series_length}"
-        )
+    preembedded = manifold_x is not None and manifold_y is not None
 
-    manifold_x, xt = _construct_manifold(x_arr, tau, e_dim)
-    manifold_y, yt = _construct_manifold(y_arr, tau, e_dim)
-    n_vectors = manifold_x.shape[0]
+    if preembedded:
+        manifold_x = np.asarray(manifold_x, dtype=float)
+        manifold_y = np.asarray(manifold_y, dtype=float)
+        if manifold_x.shape != manifold_y.shape:
+            raise ValueError("manifold_x and manifold_y must have the same shape")
+        if manifold_x.ndim != 2:
+            raise ValueError("Precomputed manifolds must be two-dimensional")
+        if manifold_x.shape[1] != e_dim:
+            raise ValueError(
+                f"Precomputed manifold dimension {manifold_x.shape[1]} does not match e_dim={e_dim}"
+            )
+        if series_x_tail is None or series_y_tail is None:
+            raise ValueError(
+                "series_x_tail and series_y_tail must be provided when using precomputed manifolds"
+            )
+        xt = _as_float_array(series_x_tail)
+        yt = _as_float_array(series_y_tail)
+        n_vectors = manifold_x.shape[0]
+        if xt.size != n_vectors or yt.size != n_vectors:
+            raise ValueError("Tail series must match manifold length")
+    else:
+        series_length = x_arr.size
+        embed_span = (e_dim - 1) * abs(tau)
+        required = embed_span + 1
+        if required > series_length:
+            raise ValueError(
+                "Embedding exceeds series length: need at least "
+                f"{required} points, received {series_length}"
+            )
+
+        manifold_x, xt = _construct_manifold(x_arr, tau, e_dim)
+        manifold_y, yt = _construct_manifold(y_arr, tau, e_dim)
+        n_vectors = manifold_x.shape[0]
 
     if library_indices is not None:
         lib_idx = np.asarray(library_indices, dtype=int)

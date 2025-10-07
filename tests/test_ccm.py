@@ -446,6 +446,112 @@ class CCMTests(unittest.TestCase):
 
         pd.testing.assert_frame_equal(result_one, result_two)
 
+    def test_conditional_embedded_true(self):
+        t = np.linspace(0, 6 * np.pi, 360)
+        x = np.sin(t)
+        y = 0.5 * np.roll(x, 1) + 0.5 * np.cos(0.2 * t)
+        z = np.cos(0.7 * t)
+
+        frame = pd.DataFrame({"x": x, "y": y, "z": z})
+
+        base = CCM(
+            dataFrame=frame,
+            columns="x",
+            target="y",
+            conditional="z",
+            libSizes=[200],
+            E=2,
+            tau=-1,
+            num_skip=5,
+            causal=True,
+        )
+
+        embedded_frame = pd.DataFrame(
+            {
+                "x0": frame["x"].iloc[1:].to_numpy(),
+                "x1": frame["x"].iloc[:-1].to_numpy(),
+                "y0": frame["y"].iloc[1:].to_numpy(),
+                "y1": frame["y"].iloc[:-1].to_numpy(),
+                "z0": frame["z"].iloc[1:].to_numpy(),
+                "z1": frame["z"].iloc[:-1].to_numpy(),
+            }
+        )
+
+        embedded_res = CCM(
+            dataFrame=embedded_frame,
+            columns=["x0", "x1"],
+            target=["y0", "y1"],
+            conditional=[["z0", "z1"]],
+            libSizes=[200],
+            E=2,
+            tau=-1,
+            num_skip=5,
+            causal=True,
+            embedded=True,
+        )
+
+        np.testing.assert_allclose(
+            base.iloc[:, 1:].to_numpy(),
+            embedded_res.iloc[:, 1:].to_numpy(),
+            rtol=1e-5,
+            atol=1e-5,
+        )
+
+        base_counts = base.attrs.get("SampleCount")
+        embedded_counts = embedded_res.attrs.get("SampleCount")
+        base_vals = sorted(base_counts[200].values())
+        embedded_vals = sorted(embedded_counts[200].values())
+        self.assertEqual(base_vals, embedded_vals)
+
+
+    def test_ccm_embedded_true(self):
+        t = np.linspace(0, 6 * np.pi, 260)
+        x = np.sin(t)
+        y = np.roll(x, 1)
+
+        base_frame = pd.DataFrame({"x": x, "y": y})
+        embedded_frame = pd.DataFrame(
+            {
+                "x0": x[1:],
+                "x1": x[:-1],
+                "y0": y[1:],
+                "y1": y[:-1],
+            }
+        ).reset_index(drop=True)
+
+        base_result = CCM(
+            dataFrame=base_frame,
+            columns="x",
+            target="y",
+            libSizes=[120],
+            E=2,
+            tau=-1,
+            num_skip=5,
+            causal=True,
+        )
+
+        embedded_result = CCM(
+            dataFrame=embedded_frame,
+            columns=["x0", "x1"],
+            target=["y0", "y1"],
+            libSizes=[120],
+            E=2,
+            tau=-1,
+            num_skip=5,
+            causal=True,
+            embedded=True,
+        )
+
+        base_forward = base_result.iloc[:, 1].to_numpy()
+        embedded_forward = embedded_result.iloc[:, 1].to_numpy()
+
+        np.testing.assert_allclose(
+            base_forward,
+            embedded_forward,
+            rtol=1e-5,
+            atol=1e-5,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
