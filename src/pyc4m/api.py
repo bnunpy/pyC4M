@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Sequence
+from typing import Dict, Iterable, List, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -154,9 +154,18 @@ def CCM(
         total_vectors = np.arange(latent_length, dtype=int)
         rng = default_rng(seed)
 
+        metric_keys = [
+            "x_on_y",
+            "y_on_x",
+            "var_x_with_cross",
+            "var_x_conditionals",
+            "var_y_with_cross",
+            "var_y_conditionals",
+        ]
+
         base_settings: Dict[str, object] | None = None
-        base_correlations: Dict[int, np.ndarray] = {}
-        records: List[Dict[str, object]] = []
+        pair_summaries: Dict[int, Dict[Tuple[int, int], Dict[str, List[float]]]] = {}
+        base_corr_stats: Dict[int, Dict[str, np.ndarray]] = {}
 
         for lib_size in parsed_lib_sizes:
             lib_vectors = lib_size - embed_gap
@@ -202,26 +211,81 @@ def CCM(
                         }
                     )
 
-                base_correlations[lib_size] = cond_result.base_correlations
-
+                pair_store = pair_summaries.setdefault(lib_size, {})
                 for (src_idx, tgt_idx), pair_result in cond_result.pair_results.items():
-                    records.append(
-                        {
-                            "LibSize": lib_size,
-                            "Sample": sample_index,
-                            "source": all_columns[src_idx],
-                            "target": all_columns[tgt_idx],
-                            "conditional": conditional_cols,
-                            "x_on_y": pair_result.x_on_y,
-                            "y_on_x": pair_result.y_on_x,
-                            "var_x_with_cross": pair_result.diagnostics["var_x_with_cross"],
-                            "var_x_conditionals": pair_result.diagnostics["var_x_conditionals"],
-                            "var_y_with_cross": pair_result.diagnostics["var_y_with_cross"],
-                            "var_y_conditionals": pair_result.diagnostics["var_y_conditionals"],
-                        }
+                    metrics = pair_store.setdefault(
+                        (src_idx, tgt_idx),
+                        {key: [] for key in metric_keys},
+                    )
+                    metrics["x_on_y"].append(pair_result.x_on_y)
+                    metrics["y_on_x"].append(pair_result.y_on_x)
+                    metrics["var_x_with_cross"].append(
+                        pair_result.diagnostics["var_x_with_cross"]
+                    )
+                    metrics["var_x_conditionals"].append(
+                        pair_result.diagnostics["var_x_conditionals"]
+                    )
+                    metrics["var_y_with_cross"].append(
+                        pair_result.diagnostics["var_y_with_cross"]
+                    )
+                    metrics["var_y_conditionals"].append(
+                        pair_result.diagnostics["var_y_conditionals"]
                     )
 
-        conditional_df = pd.DataFrame(records)
+                stats = base_corr_stats.setdefault(
+                    lib_size,
+                    {
+                        "sum": np.zeros_like(cond_result.base_correlations, dtype=float),
+                        "sumsq": np.zeros_like(cond_result.base_correlations, dtype=float),
+                        "count": 0,
+                    },
+                )
+                stats["sum"] += cond_result.base_correlations
+                stats["sumsq"] += cond_result.base_correlations**2
+                stats["count"] += 1
+
+        records: List[Dict[str, object]] = []
+        for lib_size in sorted(pair_summaries.keys()):
+            for (src_idx, tgt_idx), metrics in pair_summaries[lib_size].items():
+                sample_count_actual = len(metrics["x_on_y"])
+                record: Dict[str, object] = {
+                    "LibSize": lib_size,
+                    "SampleCount": sample_count_actual,
+                    "source": all_columns[src_idx],
+                    "target": all_columns[tgt_idx],
+                    "conditional": conditional_cols,
+                }
+                for key in metric_keys:
+                    values = np.array(metrics[key], dtype=float)
+                    record[f"{key}_mean"] = float(np.nanmean(values))
+                    record[f"{key}_var"] = float(np.nanvar(values))
+                records.append(record)
+
+        if not records:
+            raise RuntimeError("CCM(): conditional results are empty")
+
+        records.sort(key=lambda r: (r["LibSize"], r["source"], r["target"]))
+        column_order = [
+            "LibSize",
+            "SampleCount",
+            "source",
+            "target",
+            "conditional",
+            "x_on_y_mean",
+            "x_on_y_var",
+            "y_on_x_mean",
+            "y_on_x_var",
+            "var_x_with_cross_mean",
+            "var_x_with_cross_var",
+            "var_x_conditionals_mean",
+            "var_x_conditionals_var",
+            "var_y_with_cross_mean",
+            "var_y_with_cross_var",
+            "var_y_conditionals_mean",
+            "var_y_conditionals_var",
+        ]
+        conditional_df = pd.DataFrame(records, columns=column_order)
+
         if base_settings is None:
             base_settings = {
                 "tau": tau,
@@ -237,8 +301,20 @@ def CCM(
 
         base_settings.update({"LibSizes": parsed_lib_sizes, "Sample": sample_count})
 
+        aggregated_base_correlations: Dict[int, Dict[str, object]] = {}
+        for lib_size, stats in base_corr_stats.items():
+            count = stats["count"]
+            mean = stats["sum"] / count
+            var = stats["sumsq"] / count - mean**2
+            var = np.maximum(var, 0.0)
+            aggregated_base_correlations[lib_size] = {
+                "mean": mean,
+                "var": var,
+                "count": count,
+            }
+
         conditional_df.attrs["Settings"] = base_settings
-        conditional_df.attrs["BaseCorrelations"] = base_correlations
+        conditional_df.attrs["BaseCorrelations"] = aggregated_base_correlations
 
         return conditional_df
 

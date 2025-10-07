@@ -384,21 +384,30 @@ class CCMTests(unittest.TestCase):
         self.assertIsInstance(result, pd.DataFrame)
         self.assertListEqual(list(result.columns), [
             "LibSize",
-            "Sample",
+            "SampleCount",
             "source",
             "target",
             "conditional",
-            "x_on_y",
-            "y_on_x",
-            "var_x_with_cross",
-            "var_x_conditionals",
-            "var_y_with_cross",
-            "var_y_conditionals",
+            "x_on_y_mean",
+            "x_on_y_var",
+            "y_on_x_mean",
+            "y_on_x_var",
+            "var_x_with_cross_mean",
+            "var_x_with_cross_var",
+            "var_x_conditionals_mean",
+            "var_x_conditionals_var",
+            "var_y_with_cross_mean",
+            "var_y_with_cross_var",
+            "var_y_conditionals_mean",
+            "var_y_conditionals_var",
         ])
         first_row = result.iloc[0]
         self.assertEqual(first_row["source"], "x")
         self.assertEqual(first_row["target"], "y")
         self.assertEqual(first_row["conditional"], ["z"])
+        self.assertTrue((result["SampleCount"] == 3).all())
+        self.assertTrue((result["x_on_y_var"] >= 0).all())
+        self.assertTrue((result["y_on_x_var"] >= 0).all())
 
         settings = result.attrs.get("Settings", {})
         self.assertEqual(settings.get("source"), "x")
@@ -430,9 +439,9 @@ class CCMTests(unittest.TestCase):
         result_two = CCM(**kwargs)
 
         self.assertSetEqual(set(result_one["LibSize"].unique()), {200, 240})
-        self.assertEqual(
-            result_one[result_one["LibSize"] == 200]["Sample"].nunique(), 3
-        )
+        self.assertTrue((result_one["SampleCount"] == kwargs["sample"]).all())
+        self.assertTrue((result_one["x_on_y_var"] >= 0).all())
+        self.assertTrue((result_one["y_on_x_var"] >= 0).all())
         pd.testing.assert_frame_equal(result_one, result_two)
 
 
