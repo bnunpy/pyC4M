@@ -171,6 +171,9 @@ def causalized_ccm(
     x_est = np.full(n_vectors, np.nan, dtype=float)
     y_est = np.full(n_vectors, np.nan, dtype=float)
 
+    tree_x = cKDTree(manifold_x)
+    tree_y = cKDTree(manifold_y)
+
     for j in range(num_skip - 1, n_vectors):
         if causal:
             candidate_idx = base_indices[base_indices <= j]
@@ -182,28 +185,44 @@ def causalized_ccm(
                 np.abs(candidate_idx - j) > exclusion_radius
             ]
 
-        if candidate_idx.size <= 1:
+        candidate_idx = candidate_idx[candidate_idx != j]
+        if candidate_idx.size == 0:
             continue
 
-        library_x = manifold_x[candidate_idx]
-        neighbours_y_local, distances_y = _query_neighbors(
-            library_x, manifold_x[j], nn + abs_tp
+        needed = min(candidate_idx.size, nn + abs_tp)
+        neighbours_y_global, distances_y = _query_tree_neighbors(
+            tree_x,
+            manifold_x,
+            j,
+            candidate_idx,
+            n_vectors,
+            needed + abs_tp,
         )
-        actual_indices_y = candidate_idx[neighbours_y_local] if neighbours_y_local.size else np.empty(0, dtype=int)
         target_indices_y, distances_y = _apply_tp_to_neighbors(
-            actual_indices_y, distances_y, n_vectors, tp, nn
+            neighbours_y_global,
+            distances_y,
+            n_vectors,
+            tp,
+            nn,
         )
         if distances_y.size:
             weights_y = _compute_weights(distances_y, epsilon)
             y_est[j] = np.dot(weights_y, yt[target_indices_y])
 
-        library_y = manifold_y[candidate_idx]
-        neighbours_x_local, distances_x = _query_neighbors(
-            library_y, manifold_y[j], nn + abs_tp
+        neighbours_x_global, distances_x = _query_tree_neighbors(
+            tree_y,
+            manifold_y,
+            j,
+            candidate_idx,
+            n_vectors,
+            needed + abs_tp,
         )
-        actual_indices_x = candidate_idx[neighbours_x_local] if neighbours_x_local.size else np.empty(0, dtype=int)
         target_indices_x, distances_x = _apply_tp_to_neighbors(
-            actual_indices_x, distances_x, n_vectors, tp, nn
+            neighbours_x_global,
+            distances_x,
+            n_vectors,
+            tp,
+            nn,
         )
         if distances_x.size:
             weights_x = _compute_weights(distances_x, epsilon)
@@ -255,34 +274,41 @@ def _construct_manifold(
     return manifold.astype(float, copy=False), tail.astype(float, copy=False)
 
 
-def _query_neighbors(
-    library: np.ndarray, query_point: np.ndarray, neighbours: int
+def _query_tree_neighbors(
+    tree: cKDTree,
+    manifold: np.ndarray,
+    query_index: int,
+    candidate_indices: np.ndarray,
+    n_vectors: int,
+    requested: int,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Find up to ``neighbours`` nearest neighbours excluding the query point."""
+    """Query a KDTree and filter results to the allowed candidate indices."""
 
-    max_neighbors = max(0, library.shape[0] - 1)
-    if max_neighbors == 0:
+    if candidate_indices.size == 0:
         return np.empty(0, dtype=int), np.empty(0, dtype=float)
 
-    k = min(neighbours, max_neighbors)
-    tree = cKDTree(library)
-    distances, indices = tree.query(query_point, k=k + 1)
-    distances = np.atleast_1d(distances)
-    indices = np.atleast_1d(indices)
+    request = min(n_vectors - 1, max(requested, 1))
+    point = manifold[query_index]
 
-    if distances.size == 0:
-        return np.empty(0, dtype=int), np.empty(0, dtype=float)
+    while True:
+        distances, indices = tree.query(point, k=request + 1)
+        distances = np.atleast_1d(distances)
+        indices = np.atleast_1d(indices)
 
-    # First neighbor is the query point itself (distance zero). Drop it but
-    # retain additional zero-distance ties, mirroring pyEDM behaviour.
-    if distances[0] == 0:
-        distances = distances[1:]
-        indices = indices[1:]
+        if indices.ndim > 1:
+            indices = indices.flatten()
+            distances = distances.flatten()
 
-    distances = distances[:k]
-    indices = indices[:k]
+        mask = np.isin(indices, candidate_indices, assume_unique=False)
+        filtered_indices = indices[mask]
+        filtered_distances = distances[mask]
 
-    return indices.astype(int), distances.astype(float)
+        if filtered_indices.size >= requested or request >= n_vectors - 1:
+            break
+
+        request = min(n_vectors - 1, request * 2)
+
+    return filtered_indices.astype(int), filtered_distances.astype(float)
 
 
 def _apply_tp_to_neighbors(
