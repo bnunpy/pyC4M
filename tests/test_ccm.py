@@ -384,30 +384,25 @@ class CCMTests(unittest.TestCase):
         self.assertIsInstance(result, pd.DataFrame)
         self.assertListEqual(list(result.columns), [
             "LibSize",
-            "SampleCount",
-            "source",
-            "target",
-            "conditional",
-            "x_on_y_mean",
-            "x_on_y_var",
-            "y_on_x_mean",
-            "y_on_x_var",
-            "var_x_with_cross_mean",
-            "var_x_with_cross_var",
-            "var_x_conditionals_mean",
-            "var_x_conditionals_var",
-            "var_y_with_cross_mean",
-            "var_y_with_cross_var",
-            "var_y_conditionals_mean",
-            "var_y_conditionals_var",
+            "x:y",
+            "y:x",
         ])
-        first_row = result.iloc[0]
-        self.assertEqual(first_row["source"], "x")
-        self.assertEqual(first_row["target"], "y")
-        self.assertEqual(first_row["conditional"], ["z"])
-        self.assertTrue((result["SampleCount"] == 3).all())
-        self.assertTrue((result["x_on_y_var"] >= 0).all())
-        self.assertTrue((result["y_on_x_var"] >= 0).all())
+        self.assertTrue((result.columns[1:] == ["x:y", "y:x"]).all())
+
+        sample_counts = result.attrs.get("SampleCount", {})
+        self.assertIn(120, sample_counts)
+        self.assertEqual(sample_counts[120]["x:y"], 3)
+        self.assertEqual(sample_counts[120]["y:x"], 3)
+
+        variance = result.attrs.get("Variance", {})
+        self.assertIn(120, variance)
+        self.assertGreaterEqual(variance[120]["x:y"], 0)
+        self.assertGreaterEqual(variance[120]["y:x"], 0)
+
+        diagnostics_mean = result.attrs.get("DiagnosticsMean", {})
+        self.assertIn(120, diagnostics_mean)
+        self.assertIn("x:y:var_with_cross", diagnostics_mean[120])
+        self.assertIn("y:x:var_with_cross", diagnostics_mean[120])
 
         settings = result.attrs.get("Settings", {})
         self.assertEqual(settings.get("source"), "x")
@@ -439,9 +434,16 @@ class CCMTests(unittest.TestCase):
         result_two = CCM(**kwargs)
 
         self.assertSetEqual(set(result_one["LibSize"].unique()), {200, 240})
-        self.assertTrue((result_one["SampleCount"] == kwargs["sample"]).all())
-        self.assertTrue((result_one["x_on_y_var"] >= 0).all())
-        self.assertTrue((result_one["y_on_x_var"] >= 0).all())
+        sample_counts = result_one.attrs.get("SampleCount", {})
+        for lib_size in (200, 240):
+            self.assertEqual(sample_counts[lib_size]["x:y"], kwargs["sample"])
+            self.assertEqual(sample_counts[lib_size]["y:x"], kwargs["sample"])
+
+        variance = result_one.attrs.get("Variance", {})
+        for lib_size in (200, 240):
+            self.assertGreaterEqual(variance[lib_size]["x:y"], 0)
+            self.assertGreaterEqual(variance[lib_size]["y:x"], 0)
+
         pd.testing.assert_frame_equal(result_one, result_two)
 
 

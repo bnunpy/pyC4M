@@ -85,24 +85,26 @@ cond_wrapper = CCM(
     E=3,
     num_skip=5,
 )
-print(cond_wrapper["x_on_y_mean"].iloc[0])
-print(cond_wrapper[["LibSize", "SampleCount"]].head())
+print(cond_wrapper["x:y"].iloc[0])
+print(cond_wrapper[["LibSize", "x:y", "y:x"]].head())
 
 settings = cond_wrapper.attrs.get("Settings", {})
 print(settings.get("conditional"))
+print(cond_wrapper.attrs.get("SampleCount"))
+print(cond_wrapper.attrs.get("Variance"))
 ```
 
 The DataFrame returned by `CCM(..., conditional=...)` stores metadata in `df.attrs["Settings"]` and `df.attrs["BaseCorrelations"]`.
 
 Column meanings:
 
-- `LibSize`, `SampleCount`: library size and number of resamples combined in each row.
-- `x_on_y_mean`, `y_on_x_mean`: conditional CCM causality ratios averaged across resamples.
-- `x_on_y_var`, `y_on_x_var`: variance of the conditional ratios across resamples.
-- `var_x_with_cross_mean`, `var_y_with_cross_mean`: residual variances after including the cross-map alongside the conditioning set (averaged across resamples).
-- `var_x_with_cross_var`, `var_y_with_cross_var`: variance of those residuals across resamples.
-- `var_x_conditionals_mean`, `var_y_conditionals_mean`: residual variances using only the conditioning variables (averaged across resamples).
-- `var_x_conditionals_var`, `var_y_conditionals_var`: variance of the conditioning-only residuals across resamples.
+- `LibSize`: library size corresponding to the aggregated statistics.
+- `x:y`, `y:x`: conditional CCM causality ratios (mean over resamples) for each direction, using the same column naming as `pyEDM.CCM`.
+
+Additional per-library details are stored in `df.attrs`:
+- `SampleCount[lib_size]["x:y"]` / `SampleCount[lib_size]["y:x"]` give the number of resamples aggregated.
+- `Variance[lib_size]["x:y"]` / `Variance[lib_size]["y:x"]` hold the variance across resamples.
+- `DiagnosticsMean` / `DiagnosticsVar` contain residual variances with and without the cross-map for each direction (keys such as `"x:y:var_with_cross"`).
 
 
 Monte-Carlo style diagnostics matching the MATLAB reference (`var_*` entries) are exposed via the `diagnostics` dictionaries returned for every pair.

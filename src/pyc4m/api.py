@@ -244,47 +244,74 @@ def CCM(
                 stats["sumsq"] += cond_result.base_correlations**2
                 stats["count"] += 1
 
-        records: List[Dict[str, object]] = []
-        for lib_size in sorted(pair_summaries.keys()):
-            for (src_idx, tgt_idx), metrics in pair_summaries[lib_size].items():
-                sample_count_actual = len(metrics["x_on_y"])
-                record: Dict[str, object] = {
-                    "LibSize": lib_size,
-                    "SampleCount": sample_count_actual,
-                    "source": all_columns[src_idx],
-                    "target": all_columns[tgt_idx],
-                    "conditional": conditional_cols,
-                }
-                for key in metric_keys:
-                    values = np.array(metrics[key], dtype=float)
-                    record[f"{key}_mean"] = float(np.nanmean(values))
-                    record[f"{key}_var"] = float(np.nanvar(values))
-                records.append(record)
-
-        if not records:
+        if not pair_summaries:
             raise RuntimeError("CCM(): conditional results are empty")
 
-        records.sort(key=lambda r: (r["LibSize"], r["source"], r["target"]))
-        column_order = [
-            "LibSize",
-            "SampleCount",
-            "source",
-            "target",
-            "conditional",
-            "x_on_y_mean",
-            "x_on_y_var",
-            "y_on_x_mean",
-            "y_on_x_var",
-            "var_x_with_cross_mean",
-            "var_x_with_cross_var",
-            "var_x_conditionals_mean",
-            "var_x_conditionals_var",
-            "var_y_with_cross_mean",
-            "var_y_with_cross_var",
-            "var_y_conditionals_mean",
-            "var_y_conditionals_var",
-        ]
-        conditional_df = pd.DataFrame(records, columns=column_order)
+        effect_lists: Dict[int, Dict[str, List[float]]] = {}
+        effect_vars: Dict[int, Dict[str, float]] = {}
+        sample_counts: Dict[int, Dict[str, int]] = {}
+        diagnostics_lists: Dict[int, Dict[str, List[float]]] = {}
+        diagnostics_mean: Dict[int, Dict[str, float]] = {}
+        diagnostics_var: Dict[int, Dict[str, float]] = {}
+        label_order: List[str] = []
+
+        def register_label(label: str) -> None:
+            if label not in label_order:
+                label_order.append(label)
+
+        for lib_size, pair_map in pair_summaries.items():
+            effect_lists.setdefault(lib_size, {})
+            sample_counts.setdefault(lib_size, {})
+            diagnostics_lists.setdefault(lib_size, {})
+
+            for pair, metrics in pair_map.items():
+                src_idx, tgt_idx = pair
+                forward_label = f"{all_columns[src_idx]}:{all_columns[tgt_idx]}"
+                reverse_label = f"{all_columns[tgt_idx]}:{all_columns[src_idx]}"
+                register_label(forward_label)
+                register_label(reverse_label)
+
+                effect_lists[lib_size][forward_label] = list(metrics["x_on_y"])
+                effect_lists[lib_size][reverse_label] = list(metrics["y_on_x"])
+
+                sample_counts[lib_size][forward_label] = len(metrics["x_on_y"])
+                sample_counts[lib_size][reverse_label] = len(metrics["y_on_x"])
+
+                diagnostics_lists[lib_size][
+                    f"{forward_label}:var_with_cross"
+                ] = list(metrics["var_y_with_cross"])
+                diagnostics_lists[lib_size][
+                    f"{forward_label}:var_conditionals"
+                ] = list(metrics["var_y_conditionals"])
+                diagnostics_lists[lib_size][
+                    f"{reverse_label}:var_with_cross"
+                ] = list(metrics["var_x_with_cross"])
+                diagnostics_lists[lib_size][
+                    f"{reverse_label}:var_conditionals"
+                ] = list(metrics["var_x_conditionals"])
+
+        rows: List[Dict[str, object]] = []
+        for lib_size in sorted(effect_lists.keys()):
+            row = {"LibSize": lib_size}
+            effect_vars[lib_size] = {}
+            diagnostics_mean[lib_size] = {}
+            diagnostics_var[lib_size] = {}
+
+            for label in label_order:
+                values = np.array(effect_lists[lib_size].get(label, []), dtype=float)
+                if values.size == 0:
+                    continue
+                row[label] = float(np.nanmean(values))
+                effect_vars[lib_size][label] = float(np.nanvar(values))
+
+            for diag_key, values in diagnostics_lists[lib_size].items():
+                arr = np.array(values, dtype=float)
+                diagnostics_mean[lib_size][diag_key] = float(np.nanmean(arr))
+                diagnostics_var[lib_size][diag_key] = float(np.nanvar(arr))
+
+            rows.append(row)
+
+        conditional_df = pd.DataFrame(rows, columns=["LibSize", *label_order])
 
         if base_settings is None:
             base_settings = {
@@ -315,6 +342,10 @@ def CCM(
 
         conditional_df.attrs["Settings"] = base_settings
         conditional_df.attrs["BaseCorrelations"] = aggregated_base_correlations
+        conditional_df.attrs["SampleCount"] = sample_counts
+        conditional_df.attrs["Variance"] = effect_vars
+        conditional_df.attrs["DiagnosticsMean"] = diagnostics_mean
+        conditional_df.attrs["DiagnosticsVar"] = diagnostics_var
 
         return conditional_df
 
