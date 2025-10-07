@@ -383,6 +383,8 @@ class CCMTests(unittest.TestCase):
 
         self.assertIsInstance(result, pd.DataFrame)
         self.assertListEqual(list(result.columns), [
+            "LibSize",
+            "Sample",
             "source",
             "target",
             "conditional",
@@ -393,15 +395,45 @@ class CCMTests(unittest.TestCase):
             "var_y_with_cross",
             "var_y_conditionals",
         ])
-        self.assertEqual(result.loc[0, "source"], "x")
-        self.assertEqual(result.loc[0, "target"], "y")
-        self.assertEqual(result.loc[0, "conditional"], ["z"])
+        first_row = result.iloc[0]
+        self.assertEqual(first_row["source"], "x")
+        self.assertEqual(first_row["target"], "y")
+        self.assertEqual(first_row["conditional"], ["z"])
 
         settings = result.attrs.get("Settings", {})
         self.assertEqual(settings.get("source"), "x")
         self.assertEqual(settings.get("target"), "y")
         self.assertEqual(settings.get("conditional"), ["z"])
 
+    def test_conditional_libsizes_and_sampling(self):
+        t = np.linspace(0, 6 * np.pi, 360)
+        x = np.sin(t)
+        y = 0.5 * np.roll(x, 1) + 0.5 * np.cos(0.3 * t)
+        z = np.cos(0.7 * t)
+        frame = pd.DataFrame({"x": x, "y": y, "z": z})
+
+        kwargs = dict(
+            dataFrame=frame,
+            columns="x",
+            target="y",
+            conditional=["z"],
+            libSizes=[200, 240],
+            sample=3,
+            tau=-1,
+            E=3,
+            num_skip=5,
+            causal=True,
+            seed=11,
+        )
+
+        result_one = CCM(**kwargs)
+        result_two = CCM(**kwargs)
+
+        self.assertSetEqual(set(result_one["LibSize"].unique()), {200, 240})
+        self.assertEqual(
+            result_one[result_one["LibSize"] == 200]["Sample"].nunique(), 3
+        )
+        pd.testing.assert_frame_equal(result_one, result_two)
 
 
 if __name__ == "__main__":

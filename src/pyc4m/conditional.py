@@ -26,7 +26,7 @@ class ConditionalCCMResult:
 
     pair_results: Dict[Tuple[int, int], ConditionalPairResult]
     base_correlations: np.ndarray
-    settings: Dict[str, int]
+    settings: Dict[str, object]
 
 
 def conditional_ccm(
@@ -37,6 +37,7 @@ def conditional_ccm(
     num_skip: int = 10,
     exclusion_radius: int = 0,
     causal: bool = True,
+    library_indices: Sequence[int] | None = None,
 ) -> ConditionalCCMResult:
     """Compute conditional causalized CCM for the requested column pairs.
 
@@ -61,6 +62,10 @@ def conditional_ccm(
     causal : bool, optional
         If ``True`` (default) reuse causalized projections; set to ``False``
         to run conditional CCM with standard (non-causal) libraries.
+    library_indices : sequence of int, optional
+        Subset of reconstructed-state indices to use as the library. Indices
+        refer to rows of the embedded manifolds (0-based) after accounting for
+        the embedding gap. ``None`` uses the full available library.
 
     Returns
     -------
@@ -114,6 +119,19 @@ def conditional_ccm(
 
     tail_start = embed_gap if tau_value < 0 else 0
 
+    lib_idx: np.ndarray | None
+    if library_indices is not None:
+        lib_idx = np.asarray(list(library_indices), dtype=int)
+        if lib_idx.ndim != 1:
+            raise ValueError("conditional_ccm(): library_indices must be one-dimensional")
+        if lib_idx.size == 0:
+            raise ValueError("conditional_ccm(): library_indices must not be empty")
+        if np.any(lib_idx < 0) or np.any(lib_idx >= latent_length):
+            raise ValueError("conditional_ccm(): library_indices out of range")
+        lib_idx = np.unique(lib_idx)
+    else:
+        lib_idx = None
+
     # Pre-compute causalized CCM reconstructions for all variable pairs.
     estimates = np.full((n_variables, n_variables, latent_length), np.nan)
     correlations = np.full((n_variables, n_variables), np.nan)
@@ -128,6 +146,7 @@ def conditional_ccm(
                 num_skip=num_skip,
                 exclusion_radius=exclusion_radius,
                 causal=causal,
+                library_indices=lib_idx,
             )
             estimates[i, j, :] = result.y_estimates
             estimates[j, i, :] = result.x_estimates

@@ -142,45 +142,103 @@ def CCM(
 
         all_columns = [source_col, target_col] + conditional_cols
         subset = df[all_columns].to_numpy(dtype=float)
+        embed_gap = (E - 1) * abs(tau)
+        latent_length = len(subset) - embed_gap
+        if latent_length <= num_skip:
+            raise RuntimeError(
+                "CCM(): insufficient data for the requested embedding and num_skip"
+            )
 
-        cond_result = conditional_ccm(
-            subset,
-            tau=tau,
-            e_dim=E,
-            pairs=[(0, 1)],
-            num_skip=num_skip,
-            exclusion_radius=exclusion_radius_value,
-            causal=causal_flag,
-        )
+        parsed_lib_sizes = _parse_lib_sizes(lib_sizes_arg, len(subset), E, tau, 0)
 
-        cond_result.settings.update(
-            {
+        total_vectors = np.arange(latent_length, dtype=int)
+        rng = default_rng(seed)
+
+        base_settings: Dict[str, object] | None = None
+        base_correlations: Dict[int, np.ndarray] = {}
+        records: List[Dict[str, object]] = []
+
+        for lib_size in parsed_lib_sizes:
+            lib_vectors = lib_size - embed_gap
+            if lib_vectors <= 1:
+                raise RuntimeError(
+                    f"CCM(): library size {lib_size} is too small for embedding E={E}, tau={tau}"
+                )
+            if lib_vectors > latent_length:
+                raise RuntimeError(
+                    f"CCM(): library size {lib_size} exceeds available length {latent_length + embed_gap}"
+                )
+
+            for sample_index in range(sample_count):
+                if lib_vectors == latent_length and sample_index == 0:
+                    library_idx = None
+                else:
+                    if sample_index == 0:
+                        library_idx = total_vectors[:lib_vectors]
+                    else:
+                        library_idx = np.sort(
+                            rng.choice(total_vectors, size=lib_vectors, replace=False)
+                        )
+
+                cond_result = conditional_ccm(
+                    subset,
+                    tau=tau,
+                    e_dim=E,
+                    pairs=[(0, 1)],
+                    num_skip=num_skip,
+                    exclusion_radius=exclusion_radius_value,
+                    causal=causal_flag,
+                    library_indices=None if library_idx is None else library_idx,
+                )
+
+                if base_settings is None:
+                    base_settings = dict(cond_result.settings)
+                    base_settings.update(
+                        {
+                            "source": source_col,
+                            "target": target_col,
+                            "conditional": conditional_cols,
+                            "columns": all_columns,
+                        }
+                    )
+
+                base_correlations[lib_size] = cond_result.base_correlations
+
+                for (src_idx, tgt_idx), pair_result in cond_result.pair_results.items():
+                    records.append(
+                        {
+                            "LibSize": lib_size,
+                            "Sample": sample_index,
+                            "source": all_columns[src_idx],
+                            "target": all_columns[tgt_idx],
+                            "conditional": conditional_cols,
+                            "x_on_y": pair_result.x_on_y,
+                            "y_on_x": pair_result.y_on_x,
+                            "var_x_with_cross": pair_result.diagnostics["var_x_with_cross"],
+                            "var_x_conditionals": pair_result.diagnostics["var_x_conditionals"],
+                            "var_y_with_cross": pair_result.diagnostics["var_y_with_cross"],
+                            "var_y_conditionals": pair_result.diagnostics["var_y_conditionals"],
+                        }
+                    )
+
+        conditional_df = pd.DataFrame(records)
+        if base_settings is None:
+            base_settings = {
+                "tau": tau,
+                "e_dim": E,
+                "num_skip": num_skip,
+                "exclusion_radius": exclusion_radius_value,
+                "causal": causal_flag,
                 "source": source_col,
                 "target": target_col,
                 "conditional": conditional_cols,
                 "columns": all_columns,
             }
-        )
 
-        records = []
-        for (src_idx, tgt_idx), pair_result in cond_result.pair_results.items():
-            records.append(
-                {
-                    "source": all_columns[src_idx],
-                    "target": all_columns[tgt_idx],
-                    "conditional": conditional_cols,
-                    "x_on_y": pair_result.x_on_y,
-                    "y_on_x": pair_result.y_on_x,
-                    "var_x_with_cross": pair_result.diagnostics["var_x_with_cross"],
-                    "var_x_conditionals": pair_result.diagnostics["var_x_conditionals"],
-                    "var_y_with_cross": pair_result.diagnostics["var_y_with_cross"],
-                    "var_y_conditionals": pair_result.diagnostics["var_y_conditionals"],
-                }
-            )
+        base_settings.update({"LibSizes": parsed_lib_sizes, "Sample": sample_count})
 
-        conditional_df = pd.DataFrame(records)
-        conditional_df.attrs["Settings"] = cond_result.settings
-        conditional_df.attrs["BaseCorrelations"] = cond_result.base_correlations
+        conditional_df.attrs["Settings"] = base_settings
+        conditional_df.attrs["BaseCorrelations"] = base_correlations
 
         return conditional_df
 
