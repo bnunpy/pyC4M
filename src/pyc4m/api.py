@@ -32,7 +32,7 @@ def CCM(
     target: str | Sequence[str] = "",
     libSizes: Iterable[int] | str | None = None,
     sample: int = 0,
-    E: int = 0,
+    E: int = 3,
     Tp: int = 0,
     knn: int = 0,
     tau: int = -1,
@@ -46,7 +46,7 @@ def CCM(
     verbose: bool = False,
     showPlot: bool = False,
     returnObject: bool = False,
-    causal: bool = True,
+    causal: bool = False,
     conditional: str | Sequence[str] | None = None,
     **kwargs,
 ):
@@ -319,7 +319,7 @@ def conditional(
     pairs: Sequence[Sequence[int]] | None = None,
     num_skip: int = 10,
     exclusionRadius: int = 0,
-    causal: bool = True,
+    causal: bool = False,
 ):
     """Wrapper around :func:`conditional_ccm` using pandas column lookup."""
 

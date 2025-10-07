@@ -47,6 +47,7 @@ class CCMTests(unittest.TestCase):
             E=2,
             tau=-1,
             num_skip=5,
+            causal=True,
         )
 
         self.assertListEqual(list(result.columns), ["LibSize", "x:y", "y:x"])
@@ -67,6 +68,7 @@ class CCMTests(unittest.TestCase):
             tau=-1,
             includeData=True,
             num_skip=5,
+            causal=True,
         )
 
         self.assertIn("LibMeans", output)
@@ -90,6 +92,7 @@ class CCMTests(unittest.TestCase):
             sample=4,
             seed=5,
             num_skip=5,
+            causal=True,
         )
 
         result_two = CCM(
@@ -102,6 +105,7 @@ class CCMTests(unittest.TestCase):
             sample=4,
             seed=5,
             num_skip=5,
+            causal=True,
         )
 
         np.testing.assert_allclose(
@@ -121,6 +125,7 @@ class CCMTests(unittest.TestCase):
             seed=2,
             includeData=True,
             num_skip=5,
+            causal=True,
         )["PredictStats1"]
 
         self.assertEqual(stats["Sample"].nunique(), 3)
@@ -139,6 +144,7 @@ class CCMTests(unittest.TestCase):
             E=3,
             tau=-1,
             num_skip=5,
+            causal=True,
         )
 
         excluded = CCM(
@@ -150,6 +156,7 @@ class CCMTests(unittest.TestCase):
             tau=-1,
             exclusionRadius=12,
             num_skip=5,
+            causal=True,
         )
 
         self.assertEqual(len(baseline), len(excluded))
@@ -169,6 +176,7 @@ class CCMTests(unittest.TestCase):
             pairs=[(0, 1)],
             num_skip=5,
             exclusionRadius=3,
+            causal=True,
         )
 
         self.assertIn((0, 1), result.pair_results)
@@ -187,6 +195,7 @@ class CCMTests(unittest.TestCase):
             E=3,
             tau=-1,
             num_skip=5,
+            causal=True,
         )
 
         non_causal_result = CCM(
@@ -217,6 +226,7 @@ class CCMTests(unittest.TestCase):
             e_dim=3,
             pairs=[(0, 1)],
             num_skip=5,
+            causal=True,
         )
 
         non_causal_cond = conditional(
@@ -244,6 +254,7 @@ class CCMTests(unittest.TestCase):
                 libSizes=[80],
                 E=2,
                 tau=1,
+                causal=True,
             )
 
     def test_causalized_core_requires_negative_tau(self):
@@ -268,6 +279,7 @@ class CCMTests(unittest.TestCase):
                 tau=1,
                 e_dim=3,
                 pairs=[(0, 1)],
+                causal=True,
             )
 
 
@@ -328,6 +340,7 @@ class CCMTests(unittest.TestCase):
             tau=-1,
             Tp=1,
             num_skip=5,
+            causal=True,
         )
 
         self.assertEqual(len(result), 2)
@@ -346,6 +359,7 @@ class CCMTests(unittest.TestCase):
                 tau=-1,
                 Tp=25,
                 num_skip=5,
+                causal=True,
             )
     def test_ccm_conditional_argument(self):
         t = np.linspace(0, 4 * np.pi, 240)
@@ -364,6 +378,7 @@ class CCMTests(unittest.TestCase):
             tau=-1,
             E=3,
             num_skip=5,
+            causal=True,
         )
 
         self.assertIsInstance(result, pd.DataFrame)
