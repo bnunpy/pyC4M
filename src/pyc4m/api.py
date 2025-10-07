@@ -123,6 +123,11 @@ def CCM(
     except Exception as exc:  # pylint: disable=broad-except
         raise RuntimeError("CCM(): causal must be boolean") from exc
 
+    if causal_flag and tau >= 0:
+        raise RuntimeError(
+            "CCM(): causal projections require tau < 0 to embed into the past"
+        )
+
     if conditional is not None:
         if isinstance(conditional, str):
             conditional_cols = [conditional]
@@ -250,17 +255,20 @@ def CCM(
 
             if includeData:
                 start = skip - 1
-                obs_y = series_y[start:]
+                tail_start = embed_gap if tau < 0 else 0
+                latent_length = len(result.y_estimates)
+                tail_y = series_y[tail_start : tail_start + latent_length]
+                tail_x = series_x[tail_start : tail_start + latent_length]
+
+                obs_y = tail_y[start:]
                 pred_y = result.y_estimates[start:]
-                length_y = min(len(obs_y), len(pred_y))
-                err_y = ComputeError(obs_y[:length_y], pred_y[:length_y], digits=6)
+                err_y = ComputeError(obs_y, pred_y, digits=6)
                 err_y["LibSize"] = lib_size
                 err_y["Sample"] = sample_index
 
-                obs_x = series_x[start:]
+                obs_x = tail_x[start:]
                 pred_x = result.x_estimates[start:]
-                length_x = min(len(obs_x), len(pred_x))
-                err_x = ComputeError(obs_x[:length_x], pred_x[:length_x], digits=6)
+                err_x = ComputeError(obs_x, pred_x, digits=6)
                 err_x["LibSize"] = lib_size
                 err_x["Sample"] = sample_index
 

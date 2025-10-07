@@ -11,7 +11,7 @@ class CCMTests(unittest.TestCase):
     def test_causalized_ccm_perfect_synchrony(self):
         t = np.linspace(0, 2 * np.pi, 200)
         series = np.sin(t)
-        result = causalized_ccm(series, series, tau=1, e_dim=2, num_skip=5)
+        result = causalized_ccm(series, series, tau=-1, e_dim=2, num_skip=5)
         self.assertGreater(result.correlation_x, 0.99)
         self.assertGreater(result.correlation_y, 0.99)
 
@@ -25,7 +25,7 @@ class CCMTests(unittest.TestCase):
 
         data = np.column_stack([x, y, z])
         result = conditional_ccm(
-            data, tau=1, e_dim=3, pairs=[(0, 1)], num_skip=10, exclusion_radius=2
+            data, tau=-1, e_dim=3, pairs=[(0, 1)], num_skip=10, exclusion_radius=2
         )
         pair = result.pair_results[(0, 1)]
 
@@ -45,7 +45,7 @@ class CCMTests(unittest.TestCase):
             target="y",
             libSizes=[120, 180],
             E=2,
-            tau=1,
+            tau=-1,
             num_skip=5,
         )
 
@@ -64,7 +64,7 @@ class CCMTests(unittest.TestCase):
             target="y",
             libSizes="120 160 20",
             E=2,
-            tau=1,
+            tau=-1,
             includeData=True,
             num_skip=5,
         )
@@ -86,7 +86,7 @@ class CCMTests(unittest.TestCase):
             target="y",
             libSizes=[180, 220],
             E=3,
-            tau=1,
+            tau=-1,
             sample=4,
             seed=5,
             num_skip=5,
@@ -98,7 +98,7 @@ class CCMTests(unittest.TestCase):
             target="y",
             libSizes=[180, 220],
             E=3,
-            tau=1,
+            tau=-1,
             sample=4,
             seed=5,
             num_skip=5,
@@ -116,7 +116,7 @@ class CCMTests(unittest.TestCase):
             target="y",
             libSizes=[180, 220],
             E=3,
-            tau=1,
+            tau=-1,
             sample=3,
             seed=2,
             includeData=True,
@@ -137,7 +137,7 @@ class CCMTests(unittest.TestCase):
             target="y",
             libSizes=[200],
             E=3,
-            tau=1,
+            tau=-1,
             num_skip=5,
         )
 
@@ -147,7 +147,7 @@ class CCMTests(unittest.TestCase):
             target="y",
             libSizes=[200],
             E=3,
-            tau=1,
+            tau=-1,
             exclusionRadius=12,
             num_skip=5,
         )
@@ -164,7 +164,7 @@ class CCMTests(unittest.TestCase):
 
         result = conditional(
             dataFrame=frame,
-            tau=1,
+            tau=-1,
             e_dim=3,
             pairs=[(0, 1)],
             num_skip=5,
@@ -185,7 +185,7 @@ class CCMTests(unittest.TestCase):
             target="y",
             libSizes=[220],
             E=3,
-            tau=1,
+            tau=-1,
             num_skip=5,
         )
 
@@ -213,7 +213,7 @@ class CCMTests(unittest.TestCase):
 
         causal_cond = conditional(
             dataFrame=frame,
-            tau=1,
+            tau=-1,
             e_dim=3,
             pairs=[(0, 1)],
             num_skip=5,
@@ -233,12 +233,49 @@ class CCMTests(unittest.TestCase):
             non_causal_cond.pair_results[(0, 1)].x_on_y,
         )
 
+    def test_ccm_causal_requires_negative_tau(self):
+        frame = pd.DataFrame({"x": np.sin(np.linspace(0, 2 * np.pi, 120)), "y": np.cos(np.linspace(0, 2 * np.pi, 120))})
+
+        with self.assertRaises(RuntimeError):
+            CCM(
+                dataFrame=frame,
+                columns="x",
+                target="y",
+                libSizes=[80],
+                E=2,
+                tau=1,
+            )
+
+    def test_causalized_core_requires_negative_tau(self):
+        t = np.linspace(0, 2 * np.pi, 150)
+        x = np.sin(t)
+        y = np.cos(t)
+
+        with self.assertRaises(ValueError):
+            causalized_ccm(x, y, tau=1, e_dim=2, num_skip=5)
+
+    def test_conditional_causal_requires_negative_tau(self):
+        t = np.linspace(0, 4 * np.pi, 180)
+        data = np.column_stack([
+            np.sin(t),
+            np.cos(t),
+            np.sin(0.5 * t + 0.1),
+        ])
+
+        with self.assertRaises(ValueError):
+            conditional(
+                dataFrame=pd.DataFrame(data, columns=["x", "y", "z"]),
+                tau=1,
+                e_dim=3,
+                pairs=[(0, 1)],
+            )
+
 
     def test_causalized_ccm_nonzero_tp(self):
         t = np.linspace(0, 4 * np.pi, 240)
         x = np.sin(t)
         y = np.roll(x, -1)
-        result = causalized_ccm(x, y, tau=1, e_dim=2, num_skip=5, tp=1)
+        result = causalized_ccm(x, y, tau=-1, e_dim=2, num_skip=5, tp=1)
 
         self.assertTrue(np.isnan(result.x_estimates[0]))
         self.assertTrue(np.isnan(result.y_estimates[0]))
@@ -248,11 +285,11 @@ class CCMTests(unittest.TestCase):
         t = np.linspace(0, 4 * np.pi, 260)
         x = np.sin(t)
         y = np.cos(t)
-        full = causalized_ccm(x, y, tau=1, e_dim=3, num_skip=5)
+        full = causalized_ccm(x, y, tau=-1, e_dim=3, num_skip=5)
         subset = causalized_ccm(
             x,
             y,
-            tau=1,
+            tau=-1,
             e_dim=3,
             num_skip=5,
             library_indices=np.arange(50),
@@ -264,11 +301,11 @@ class CCMTests(unittest.TestCase):
         t = np.linspace(0, 4 * np.pi, 260)
         x = np.sin(t)
         y = np.cos(t)
-        full = causalized_ccm(x, y, tau=1, e_dim=3, num_skip=5)
+        full = causalized_ccm(x, y, tau=-1, e_dim=3, num_skip=5)
         subset = causalized_ccm(
             x,
             y,
-            tau=1,
+            tau=-1,
             e_dim=3,
             num_skip=5,
             library_indices=np.arange(50),
@@ -288,7 +325,7 @@ class CCMTests(unittest.TestCase):
             target="y",
             libSizes=[180, 220],
             E=2,
-            tau=1,
+            tau=-1,
             Tp=1,
             num_skip=5,
         )
@@ -306,7 +343,7 @@ class CCMTests(unittest.TestCase):
                 target="y",
                 libSizes=[20],
                 E=2,
-                tau=1,
+                tau=-1,
                 Tp=25,
                 num_skip=5,
             )
@@ -322,7 +359,9 @@ class CCMTests(unittest.TestCase):
             columns="x",
             target="y",
             conditional="z",
-            tau=1,
+            libSizes=[120, 160],
+            sample=3,
+            tau=-1,
             E=3,
             num_skip=5,
         )

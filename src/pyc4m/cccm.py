@@ -51,7 +51,9 @@ def causalized_ccm(
     x, y : array-like
         Input time series of equal length.
     tau : int
-        Time delay between embedding coordinates (positive integer).
+        Time delay between embedding coordinates. Negative values embed
+        into the past (pyEDM convention); positive values embed into the
+        future. ``tau`` must be non-zero.
     e_dim : int
         Embedding dimension ``E``.
     num_skip : int, optional
@@ -99,8 +101,8 @@ def causalized_ccm(
         raise ValueError("x and y must be one-dimensional sequences")
     if e_dim < 1:
         raise ValueError("e_dim must be positive")
-    if tau <= 0:
-        raise ValueError("tau must be a positive integer")
+    if tau == 0:
+        raise ValueError("tau must be non-zero")
     if num_skip < 1:
         raise ValueError("num_skip must be positive")
 
@@ -120,8 +122,14 @@ def causalized_ccm(
     if not isinstance(causal, (bool, np.bool_)):
         raise ValueError("causal must be a boolean")
 
+    if causal and tau > 0:
+        raise ValueError(
+            "causalized_ccm(): causal projections require tau < 0 to embed into the past"
+        )
+
     series_length = x_arr.size
-    required = 1 + (e_dim - 1) * tau
+    embed_span = (e_dim - 1) * abs(tau)
+    required = embed_span + 1
     if required > series_length:
         raise ValueError(
             "Embedding exceeds series length: need at least "
@@ -218,20 +226,33 @@ def _as_float_array(data: ArrayLike) -> np.ndarray:
 def _construct_manifold(
     series: np.ndarray, tau: int, e_dim: int
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Return delay embedding matrix and terminal segment of series."""
+    """Return delay embedding matrix and aligned series samples."""
 
     series_length = series.size
-    t_offset = 1 + (e_dim - 1) * tau
-    n_vectors = series_length - t_offset + 1
+    lag = abs(tau)
 
-    manifold = np.empty((n_vectors, e_dim), dtype=float)
-    for row in range(n_vectors):
-        latest_index = t_offset + row - 1
-        indices = latest_index - tau * np.arange(e_dim)
-        manifold[row, :] = series[indices]
+    if e_dim == 0:
+        raise ValueError("e_dim must be positive")
 
-    tail = series[t_offset - 1 :]
-    return manifold, tail
+    if tau < 0:
+        start = lag * (e_dim - 1)
+        stop = series_length
+    else:
+        start = 0
+        stop = series_length - lag * (e_dim - 1)
+
+    if stop <= start:
+        raise ValueError(
+            "Embedding configuration leaves no usable state vectors: "
+            f"E={e_dim}, tau={tau}, series length={series_length}"
+        )
+
+    base_indices = np.arange(start, stop, dtype=int)
+    offsets = tau * np.arange(e_dim, dtype=int)
+
+    manifold = series[np.add.outer(base_indices, offsets)]
+    tail = series[base_indices]
+    return manifold.astype(float, copy=False), tail.astype(float, copy=False)
 
 
 def _query_neighbors(
@@ -249,9 +270,14 @@ def _query_neighbors(
     distances = np.atleast_1d(distances)
     indices = np.atleast_1d(indices)
 
-    mask = distances > 0
-    distances = distances[mask]
-    indices = indices[mask]
+    if distances.size == 0:
+        return np.empty(0, dtype=int), np.empty(0, dtype=float)
+
+    # First neighbor is the query point itself (distance zero). Drop it but
+    # retain additional zero-distance ties, mirroring pyEDM behaviour.
+    if distances[0] == 0:
+        distances = distances[1:]
+        indices = indices[1:]
 
     distances = distances[:k]
     indices = indices[:k]

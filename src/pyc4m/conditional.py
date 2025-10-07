@@ -78,12 +78,22 @@ def conditional_ccm(
             "conditioning set is non-empty."
         )
 
-    if tau <= 0:
-        raise ValueError("tau must be positive")
+    try:
+        tau_value = int(tau)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("tau must be an integer") from exc
+
+    if tau_value == 0:
+        raise ValueError("tau must be non-zero")
     if e_dim < 1:
         raise ValueError("e_dim must be positive")
     if num_skip < 1:
         raise ValueError("num_skip must be positive")
+
+    if causal and tau_value >= 0:
+        raise ValueError(
+            "conditional_ccm(): causal projections require tau < 0 to embed into the past"
+        )
 
     try:
         exclusion_radius = int(exclusion_radius)
@@ -95,12 +105,14 @@ def conditional_ccm(
     if not isinstance(causal, (bool, np.bool_)):
         raise ValueError("conditional_ccm(): causal must be a boolean")
 
-    t_offset = 1 + (e_dim - 1) * tau
-    latent_length = n_samples - t_offset + 1
+    embed_gap = (e_dim - 1) * abs(tau_value)
+    latent_length = n_samples - embed_gap
     if latent_length <= num_skip:
         raise ValueError(
             "Time series too short for the requested embedding and num_skip"
         )
+
+    tail_start = embed_gap if tau_value < 0 else 0
 
     # Pre-compute causalized CCM reconstructions for all variable pairs.
     estimates = np.full((n_variables, n_variables, latent_length), np.nan)
@@ -111,7 +123,7 @@ def conditional_ccm(
             result = causalized_ccm(
                 data_matrix[:, i],
                 data_matrix[:, j],
-                tau=tau,
+                tau=tau_value,
                 e_dim=e_dim,
                 num_skip=num_skip,
                 exclusion_radius=exclusion_radius,
@@ -126,7 +138,7 @@ def conditional_ccm(
     pair_results: Dict[Tuple[int, int], ConditionalPairResult] = {}
 
     # Actual data aligned with the reconstructed manifold tail.
-    tail_data = data_matrix[t_offset - 1 :, :]
+    tail_data = data_matrix[tail_start : tail_start + latent_length, :]
     valid_slice = slice(num_skip - 1, None)
 
     for (i, j) in standardized_pairs:
@@ -169,7 +181,7 @@ def conditional_ccm(
             },
         )
 
-    settings = {"tau": tau, "e_dim": e_dim, "num_skip": num_skip, "exclusion_radius": exclusion_radius, "causal": causal}
+    settings = {"tau": tau_value, "e_dim": e_dim, "num_skip": num_skip, "exclusion_radius": exclusion_radius, "causal": causal}
     return ConditionalCCMResult(
         pair_results=pair_results,
         base_correlations=correlations,
