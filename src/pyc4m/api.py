@@ -167,6 +167,8 @@ def CCM(
         pair_summaries: Dict[int, Dict[Tuple[int, int], Dict[str, List[float]]]] = {}
         base_corr_stats: Dict[int, Dict[str, np.ndarray]] = {}
 
+        cached_reconstructions = {}
+
         for lib_size in parsed_lib_sizes:
             lib_vectors = lib_size - embed_gap
             if lib_vectors <= 1:
@@ -189,16 +191,21 @@ def CCM(
                             rng.choice(total_vectors, size=lib_vectors, replace=False)
                         )
 
-                cond_result = conditional_ccm(
-                    subset,
-                    tau=tau,
-                    e_dim=E,
-                    pairs=[(0, 1)],
-                    num_skip=num_skip,
-                    exclusion_radius=exclusion_radius_value,
-                    causal=causal_flag,
-                    library_indices=None if library_idx is None else library_idx,
-                )
+                key = None if library_idx is None else tuple(library_idx.tolist())
+                if key in cached_reconstructions:
+                    cond_result = cached_reconstructions[key]
+                else:
+                    cond_result = conditional_ccm(
+                        subset,
+                        tau=tau,
+                        e_dim=E,
+                        pairs=[(0, 1)],
+                        num_skip=num_skip,
+                        exclusion_radius=exclusion_radius_value,
+                        causal=causal_flag,
+                        library_indices=None if library_idx is None else library_idx,
+                    )
+                    cached_reconstructions[key] = cond_result
 
                 if base_settings is None:
                     base_settings = dict(cond_result.settings)
@@ -380,6 +387,8 @@ def CCM(
     if skip_base >= available_vectors:
         skip_base = max(1, available_vectors - 1)
 
+    cached_results: Dict[Tuple[int, Tuple[int, ...]], Tuple[float, float, np.ndarray, np.ndarray]] = {}
+
     for lib_size in parsed_lib_sizes:
         lib_vectors = lib_size - embed_gap - abs(tp_value)
         if lib_vectors <= 1:
@@ -402,37 +411,47 @@ def CCM(
 
             skip = min(skip_base, max(1, lib_vectors - 1))
 
-            result = causalized_ccm(
-                series_x,
-                series_y,
-                tau=tau,
-                e_dim=E,
-                num_skip=skip,
-                epsilon=epsilon,
-                tp=tp_value,
-                library_indices=library_idx,
-                exclusion_radius=exclusion_radius_value,
-                causal=causal_flag,
-            )
+            cache_key = (lib_size, tuple(library_idx.tolist()))
 
-            rho_xy_samples.append(result.correlation_y)
-            rho_yx_samples.append(result.correlation_x)
+            if cache_key in cached_results:
+                corr_y, corr_x, est_y, est_x = cached_results[cache_key]
+            else:
+                result = causalized_ccm(
+                    series_x,
+                    series_y,
+                    tau=tau,
+                    e_dim=E,
+                    num_skip=skip,
+                    epsilon=epsilon,
+                    tp=tp_value,
+                    library_indices=library_idx,
+                    exclusion_radius=exclusion_radius_value,
+                    causal=causal_flag,
+                )
+                corr_y = result.correlation_y
+                corr_x = result.correlation_x
+                est_y = result.y_estimates
+                est_x = result.x_estimates
+                cached_results[cache_key] = (corr_y, corr_x, est_y, est_x)
+
+            rho_xy_samples.append(corr_y)
+            rho_yx_samples.append(corr_x)
 
             if includeData:
                 start = skip - 1
                 tail_start = embed_gap if tau < 0 else 0
-                latent_length = len(result.y_estimates)
+                latent_length = len(est_y)
                 tail_y = series_y[tail_start : tail_start + latent_length]
                 tail_x = series_x[tail_start : tail_start + latent_length]
 
                 obs_y = tail_y[start:]
-                pred_y = result.y_estimates[start:]
+                pred_y = est_y[start:]
                 err_y = ComputeError(obs_y, pred_y, digits=6)
                 err_y["LibSize"] = lib_size
                 err_y["Sample"] = sample_index
 
                 obs_x = tail_x[start:]
-                pred_x = result.x_estimates[start:]
+                pred_x = est_x[start:]
                 err_x = ComputeError(obs_x, pred_x, digits=6)
                 err_x["LibSize"] = lib_size
                 err_x["Sample"] = sample_index
