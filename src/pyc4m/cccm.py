@@ -9,6 +9,13 @@ import numpy as np
 from numpy.typing import ArrayLike
 from scipy.spatial import cKDTree
 
+# Detect whether the current SciPy build supports multi-threaded KD-tree queries.
+try:
+    _CKDTREE_QUERY_WORKERS = {"workers": -1}
+    cKDTree(np.zeros((1, 1))).query(np.zeros(1), k=1, **_CKDTREE_QUERY_WORKERS)
+except TypeError:  # pragma: no cover - depends on SciPy version
+    _CKDTREE_QUERY_WORKERS = {}
+
 
 @dataclass
 class CausalizedCCMResult:
@@ -253,6 +260,7 @@ def causalized_ccm(
             ]
 
         candidate_idx = candidate_idx[candidate_idx != j]
+        candidate_idx = np.ascontiguousarray(candidate_idx, dtype=int)
         if candidate_idx.size == 0:
             continue
 
@@ -358,7 +366,7 @@ def _query_tree_neighbors(
     point = manifold[query_index]
 
     while True:
-        distances, indices = tree.query(point, k=request + 1)
+        distances, indices = tree.query(point, k=request + 1, **_CKDTREE_QUERY_WORKERS)
         distances = np.atleast_1d(distances)
         indices = np.atleast_1d(indices)
 
@@ -366,9 +374,14 @@ def _query_tree_neighbors(
             indices = indices.flatten()
             distances = distances.flatten()
 
-        mask = np.isin(indices, candidate_indices, assume_unique=False)
-        filtered_indices = indices[mask]
-        filtered_distances = distances[mask]
+        match_positions = np.searchsorted(candidate_indices, indices, side="left")
+        selection = np.zeros(indices.shape, dtype=bool)
+        valid = match_positions < candidate_indices.size
+        if np.any(valid):
+            selection[valid] = candidate_indices[match_positions[valid]] == indices[valid]
+
+        filtered_indices = indices[selection]
+        filtered_distances = distances[selection]
 
         if filtered_indices.size >= requested or request >= n_vectors - 1:
             break
