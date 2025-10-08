@@ -8,7 +8,7 @@ from typing import Dict, List, Sequence, Tuple
 import numpy as np
 from numpy.typing import ArrayLike
 
-from .cccm import causalized_ccm
+from .cccm import VariableGeometry, causalized_ccm
 
 
 @dataclass
@@ -41,6 +41,7 @@ def conditional_ccm(
     embedded: bool = False,
     manifolds: Dict[int, np.ndarray] | None = None,
     tails: Dict[int, np.ndarray] | None = None,
+    geometries: Dict[int, VariableGeometry] | None = None,
 ) -> ConditionalCCMResult:
     """Compute conditional causalized CCM for the requested column pairs.
 
@@ -79,6 +80,9 @@ def conditional_ccm(
     tails : dict, optional
         Mapping of variable index to the tail (current-time) series used for the
         regression step. Required when ``embedded=True``.
+    geometries : dict, optional
+        Mapping of variable index to pre-computed geometry (manifold, tail,
+        KD-tree). When supplied, neighbour searches reuse the cached KD-trees.
 
     Returns
     -------
@@ -166,6 +170,19 @@ def conditional_ccm(
 
         tail_start = embed_gap if tau_value < 0 else 0
 
+    if geometries is not None:
+        missing = [idx for idx in range(n_variables) if idx not in geometries]
+        if missing:
+            raise ValueError(
+                f"conditional_ccm(): missing geometry entries for indices {missing}"
+            )
+        for geom_idx, geom in geometries.items():
+            if geom.manifold.shape[0] != latent_length:
+                raise ValueError(
+                    f"conditional_ccm(): geometry length for index {geom_idx} "
+                    f"({geom.manifold.shape[0]}) does not match latent length {latent_length}"
+                )
+
     lib_idx: np.ndarray | None
     if library_indices is not None:
         lib_idx = np.asarray(list(library_indices), dtype=int)
@@ -185,32 +202,35 @@ def conditional_ccm(
 
     for i in range(n_variables - 1):
         for j in range(i + 1, n_variables):
-            if embedded_mode:
-                result = causalized_ccm(
-                    tails[i],
-                    tails[j],
-                    tau=tau_value,
-                    e_dim=e_dim,
-                    num_skip=num_skip,
-                    exclusion_radius=exclusion_radius,
-                    causal=causal,
-                    library_indices=lib_idx,
-                    manifold_x=manifolds[i],
-                    manifold_y=manifolds[j],
-                    series_x_tail=tails[i],
-                    series_y_tail=tails[j],
-                )
-            else:
-                result = causalized_ccm(
-                    data_matrix[:, i],
-                    data_matrix[:, j],
-                    tau=tau_value,
-                    e_dim=e_dim,
-                    num_skip=num_skip,
-                    exclusion_radius=exclusion_radius,
-                    causal=causal,
-                    library_indices=lib_idx,
-                )
+            geom_i = geometries[i] if geometries is not None else None
+            geom_j = geometries[j] if geometries is not None else None
+
+            series_i = tails[i] if embedded_mode else data_matrix[:, i]
+            series_j = tails[j] if embedded_mode else data_matrix[:, j]
+
+            kwargs = dict(
+                tau=tau_value,
+                e_dim=e_dim,
+                num_skip=num_skip,
+                exclusion_radius=exclusion_radius,
+                causal=causal,
+                library_indices=lib_idx,
+                geometry_x=geom_i,
+                geometry_y=geom_j,
+            )
+
+            if embedded_mode and geom_i is None:
+                kwargs["manifold_x"] = manifolds[i]
+                kwargs["series_x_tail"] = tails[i]
+            if embedded_mode and geom_j is None:
+                kwargs["manifold_y"] = manifolds[j]
+                kwargs["series_y_tail"] = tails[j]
+
+            result = causalized_ccm(
+                series_i,
+                series_j,
+                **kwargs,
+            )
             estimates[i, j, :] = result.y_estimates
             estimates[j, i, :] = result.x_estimates
             correlations[i, j] = result.correlation_y

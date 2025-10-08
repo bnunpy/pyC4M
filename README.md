@@ -119,6 +119,18 @@ python -m unittest discover -s tests -q
 
 The tests cover basic regression scenarios to guard against regressions in the numerical translation.
 
+## Benchmarks
+
+Benchmark runtime scaling across CCM variants with:
+
+```bash
+python benchmarks/runtime_benchmarks.py
+```
+
+The script sweeps a configurable grid of library sizes and sample counts, writes raw timings to `benchmarks/runtime_results.csv`, and regenerates the plot below. Pass `--progress` to display a tqdm progress bar (requires installing `tqdm`).
+
+![Runtime scaling of CCM variants](docs/img/ccm_runtime_scaling.png)
+
 ## Compatibility Notes
 
 The goal is API parity with `pyEDM.CCM()` while using the causalized dynamics from `CCM-Implement`. A few differences remain:

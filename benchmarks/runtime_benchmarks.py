@@ -31,6 +31,11 @@ if str(SRC_PATH) not in sys.path:
 
 from pyc4m import CCM  # noqa: E402
 
+try:
+    from tqdm.auto import tqdm  # type: ignore
+except ImportError:  # pragma: no cover - optional dependency
+    tqdm = None
+
 
 DEFAULT_LIB_SIZES = [100, 300, 600, 900, 1200]
 DEFAULT_SAMPLES = [1, 10, 25, 50]
@@ -129,7 +134,7 @@ def summarise_results(df: pd.DataFrame) -> pd.DataFrame:
         )
         .sort_values(["variant", "lib_size", "sample"])
     )
-    grouped["std_runtime"].fillna(0.0, inplace=True)
+    grouped["std_runtime"] = grouped["std_runtime"].fillna(0.0)
     return grouped
 
 
@@ -192,6 +197,7 @@ def run_benchmarks(
     length: int,
     csv_path: Path,
     plot_path: Path,
+    show_progress: bool = False,
 ) -> None:
     """Execute the benchmark suite and write artefacts to disk."""
 
@@ -200,6 +206,15 @@ def run_benchmarks(
     data = build_dataset(length=length, seed=BASE_SEED)
 
     records = []
+    progress_bar = None
+    total_configs = len(lib_sizes) * len(samples) * len(VARIANTS)
+    if show_progress:
+        if tqdm is None:
+            raise RuntimeError(
+                "tqdm is required for progress output. Install it or omit --progress."
+            )
+        progress_bar = tqdm(total=total_configs, desc="Benchmarking", unit="config")
+
     for lib_idx, lib_size in enumerate(lib_sizes):
         for sample_idx, sample_count in enumerate(samples):
             for variant_idx, variant in enumerate(VARIANTS):
@@ -223,11 +238,17 @@ def run_benchmarks(
                         }
                     )
 
+                if progress_bar is not None:
+                    progress_bar.update(1)
+
     raw_df = pd.DataFrame.from_records(records)
     raw_df.to_csv(csv_path, index=False)
 
     summary = summarise_results(raw_df)
     plot_scaling(summary, lib_sizes=lib_sizes, samples=samples, output_path=plot_path)
+
+    if progress_bar is not None:
+        progress_bar.close()
 
     print(f"Wrote raw timings to {csv_path}")
     print(f"Wrote runtime plot to {plot_path}")
@@ -273,6 +294,11 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         default=Path("docs") / "img" / "ccm_runtime_scaling.png",
         help="Destination for the runtime scaling plot.",
     )
+    parser.add_argument(
+        "--progress",
+        action="store_true",
+        help="Display a tqdm progress bar while running benchmarks (requires tqdm).",
+    )
     return parser.parse_args(argv)
 
 
@@ -285,6 +311,7 @@ def main(argv: Iterable[str] | None = None) -> None:
         length=args.length,
         csv_path=args.csv_path,
         plot_path=args.plot_path,
+        show_progress=args.progress,
     )
 
 

@@ -32,6 +32,15 @@ class CausalizedCCMResult:
     y_estimates: np.ndarray
 
 
+@dataclass(frozen=True)
+class VariableGeometry:
+    """Pre-computed embedding geometry for a single variable."""
+
+    manifold: np.ndarray
+    tail: np.ndarray
+    tree: cKDTree
+
+
 def causalized_ccm(
     x: ArrayLike,
     y: ArrayLike,
@@ -47,6 +56,8 @@ def causalized_ccm(
     manifold_y: Optional[np.ndarray] = None,
     series_x_tail: Optional[ArrayLike] = None,
     series_y_tail: Optional[ArrayLike] = None,
+    geometry_x: Optional[VariableGeometry] = None,
+    geometry_y: Optional[VariableGeometry] = None,
 ) -> CausalizedCCMResult:
     """Compute causalized CCM between two scalar time series.
 
@@ -133,39 +144,71 @@ def causalized_ccm(
 
     preembedded = manifold_x is not None and manifold_y is not None
 
-    if preembedded:
-        manifold_x = np.asarray(manifold_x, dtype=float)
-        manifold_y = np.asarray(manifold_y, dtype=float)
-        if manifold_x.shape != manifold_y.shape:
-            raise ValueError("manifold_x and manifold_y must have the same shape")
-        if manifold_x.ndim != 2:
-            raise ValueError("Precomputed manifolds must be two-dimensional")
-        if manifold_x.shape[1] != e_dim:
-            raise ValueError(
-                f"Precomputed manifold dimension {manifold_x.shape[1]} does not match e_dim={e_dim}"
-            )
-        if series_x_tail is None or series_y_tail is None:
-            raise ValueError(
-                "series_x_tail and series_y_tail must be provided when using precomputed manifolds"
-            )
-        xt = _as_float_array(series_x_tail)
-        yt = _as_float_array(series_y_tail)
+    if geometry_x is not None:
+        manifold_x = geometry_x.manifold
+        xt = geometry_x.tail
+        tree_x = geometry_x.tree
         n_vectors = manifold_x.shape[0]
-        if xt.size != n_vectors or yt.size != n_vectors:
-            raise ValueError("Tail series must match manifold length")
     else:
-        series_length = x_arr.size
-        embed_span = (e_dim - 1) * abs(tau)
-        required = embed_span + 1
-        if required > series_length:
-            raise ValueError(
-                "Embedding exceeds series length: need at least "
-                f"{required} points, received {series_length}"
-            )
+        if preembedded:
+            manifold_x = np.asarray(manifold_x, dtype=float)
+            if manifold_x.ndim != 2:
+                raise ValueError("Precomputed manifolds must be two-dimensional")
+            if manifold_x.shape[1] != e_dim:
+                raise ValueError(
+                    f"Precomputed manifold dimension {manifold_x.shape[1]} does not match e_dim={e_dim}"
+                )
+            if series_x_tail is None:
+                raise ValueError(
+                    "series_x_tail must be provided when using precomputed manifolds"
+                )
+            xt = _as_float_array(series_x_tail)
+            n_vectors = manifold_x.shape[0]
+            if xt.size != n_vectors:
+                raise ValueError("series_x_tail length must match manifold rows")
+        else:
+            series_length = x_arr.size
+            embed_span = (e_dim - 1) * abs(tau)
+            required = embed_span + 1
+            if required > series_length:
+                raise ValueError(
+                    "Embedding exceeds series length: need at least "
+                    f"{required} points, received {series_length}"
+                )
 
-        manifold_x, xt = _construct_manifold(x_arr, tau, e_dim)
-        manifold_y, yt = _construct_manifold(y_arr, tau, e_dim)
-        n_vectors = manifold_x.shape[0]
+            manifold_x, xt = _construct_manifold(x_arr, tau, e_dim)
+            n_vectors = manifold_x.shape[0]
+        tree_x = cKDTree(manifold_x)
+
+    if geometry_y is not None:
+        manifold_y = geometry_y.manifold
+        yt = geometry_y.tail
+        tree_y = geometry_y.tree
+        if manifold_y.shape[0] != n_vectors:
+            raise ValueError("geometry_y manifold length mismatch with geometry_x")
+    else:
+        if preembedded:
+            manifold_y = np.asarray(manifold_y, dtype=float)
+            if manifold_y.ndim != 2:
+                raise ValueError("Precomputed manifolds must be two-dimensional")
+            if manifold_y.shape[1] != e_dim:
+                raise ValueError(
+                    f"Precomputed manifold dimension {manifold_y.shape[1]} does not match e_dim={e_dim}"
+                )
+            if manifold_y.shape[0] != n_vectors:
+                raise ValueError("manifold_y must match manifold_x row count")
+            if series_y_tail is None:
+                raise ValueError(
+                    "series_y_tail must be provided when using precomputed manifolds"
+                )
+            yt = _as_float_array(series_y_tail)
+            if yt.size != n_vectors:
+                raise ValueError("series_y_tail length must match manifold rows")
+        else:
+            manifold_y, yt = _construct_manifold(y_arr, tau, e_dim)
+            if manifold_y.shape[0] != n_vectors:
+                raise ValueError("manifold_x and manifold_y must have the same shape")
+        tree_y = cKDTree(manifold_y)
 
     if library_indices is not None:
         lib_idx = np.asarray(library_indices, dtype=int)
@@ -197,9 +240,6 @@ def causalized_ccm(
     abs_tp = abs(tp)
     x_est = np.full(n_vectors, np.nan, dtype=float)
     y_est = np.full(n_vectors, np.nan, dtype=float)
-
-    tree_x = cKDTree(manifold_x)
-    tree_y = cKDTree(manifold_y)
 
     for j in range(num_skip - 1, n_vectors):
         if causal:
@@ -404,3 +444,46 @@ def _pearson_correlation(a: Iterable[float], b: Iterable[float]) -> float:
     if denom == 0:
         return np.nan
     return float(np.dot(a_sel, b_sel) / denom)
+
+
+def prepare_variable_geometry(
+    tau: int,
+    e_dim: int,
+    *,
+    series: ArrayLike | None = None,
+    manifold: Optional[np.ndarray] = None,
+    tail: Optional[ArrayLike] = None,
+) -> VariableGeometry:
+    """Construct reusable manifold and KD-tree for a single variable."""
+
+    if manifold is not None:
+        manifold_arr = np.asarray(manifold, dtype=float)
+        if manifold_arr.ndim != 2:
+            raise ValueError("prepare_variable_geometry(): manifold must be two-dimensional")
+        if manifold_arr.shape[1] != e_dim:
+            raise ValueError(
+                "prepare_variable_geometry(): manifold columns must match embedding dimension"
+            )
+        if tail is None:
+            raise ValueError(
+                "prepare_variable_geometry(): tail must be provided when manifold is supplied"
+            )
+        tail_arr = _as_float_array(tail)
+        if tail_arr.size != manifold_arr.shape[0]:
+            raise ValueError(
+                "prepare_variable_geometry(): tail length must equal manifold rows"
+            )
+    else:
+        if series is None:
+            raise ValueError(
+                "prepare_variable_geometry(): series must be provided when manifold is absent"
+            )
+        series_arr = _as_float_array(series)
+        manifold_arr, tail_arr = _construct_manifold(series_arr, tau, e_dim)
+
+    tree = cKDTree(manifold_arr)
+    return VariableGeometry(
+        manifold=manifold_arr,
+        tail=tail_arr,
+        tree=tree,
+    )

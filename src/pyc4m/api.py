@@ -12,7 +12,7 @@ from matplotlib.pyplot import axhline, show
 
 from pyEDM.AuxFunc import ComputeError, IsIterable
 
-from .cccm import causalized_ccm
+from .cccm import VariableGeometry, causalized_ccm, prepare_variable_geometry
 from .conditional import conditional_ccm
 
 
@@ -69,6 +69,7 @@ def CCM(
     manifold_target = None
     manifolds_map = None
     tails_map = None
+    geometry_map: Dict[int, VariableGeometry] | None = None
 
     is_embedded = bool(embedded)
 
@@ -206,6 +207,15 @@ def CCM(
                 idx: df[col_set[0]].to_numpy(dtype=float)
                 for idx, col_set in enumerate(variable_column_sets)
             }
+            geometry_map = {
+                idx: prepare_variable_geometry(
+                    tau=tau,
+                    e_dim=E,
+                    manifold=manifolds_map[idx],
+                    tail=tails_map[idx],
+                )
+                for idx in range(len(variable_column_sets))
+            }
 
             embed_gap = (E - 1) * abs(tau)
             latent_length = len(subset)
@@ -233,6 +243,14 @@ def CCM(
                 )
 
             parsed_lib_sizes = _parse_lib_sizes(lib_sizes_arg, len(subset), E, tau, 0)
+            geometry_map = {
+                idx: prepare_variable_geometry(
+                    tau=tau,
+                    e_dim=E,
+                    series=subset[:, idx],
+                )
+                for idx in range(len(all_columns))
+            }
 
         total_vectors = np.arange(latent_length, dtype=int)
         rng = default_rng(seed)
@@ -290,6 +308,7 @@ def CCM(
                         embedded=is_embedded,
                         manifolds=manifolds_map if is_embedded else None,
                         tails=tails_map if is_embedded else None,
+                        geometries=geometry_map,
                     )
                     cached_reconstructions[cache_key] = cond_result
 
@@ -449,13 +468,39 @@ def CCM(
         parsed_lib_sizes = _parse_lib_sizes(lib_sizes_arg, len(df), E, tau, tp_value)
 
         embed_gap = (E - 1) * abs(tau)
-        available_vectors = len(series_x) - embed_gap - abs(tp_value)
-        if available_vectors <= 1:
-            raise RuntimeError("CCM(): insufficient data for the requested embedding")
-
-        total_vectors = np.arange(available_vectors, dtype=int)
+        geometry_source = prepare_variable_geometry(
+            tau=tau,
+            e_dim=E,
+            series=series_x,
+        )
+        geometry_target = prepare_variable_geometry(
+            tau=tau,
+            e_dim=E,
+            series=series_y,
+        )
     else:
-        total_vectors = np.arange(len(series_x), dtype=int)
+        geometry_source = prepare_variable_geometry(
+            tau=tau,
+            e_dim=E,
+            manifold=manifold_source,
+            tail=series_x,
+        )
+        geometry_target = prepare_variable_geometry(
+            tau=tau,
+            e_dim=E,
+            manifold=manifold_target,
+            tail=series_y,
+        )
+
+    n_vectors = geometry_source.manifold.shape[0]
+    available_vectors = n_vectors - abs(tp_value)
+    if available_vectors <= 1:
+        raise RuntimeError("CCM(): insufficient data for the requested embedding")
+
+    if is_embedded:
+        total_vectors = np.arange(n_vectors, dtype=int)
+    else:
+        total_vectors = np.arange(available_vectors, dtype=int)
 
     if verbose:
         print(
@@ -522,10 +567,8 @@ def CCM(
                     library_indices=library_idx,
                     exclusion_radius=exclusion_radius_value,
                     causal=causal_flag,
-                    manifold_x=manifold_source if is_embedded else None,
-                    manifold_y=manifold_target if is_embedded else None,
-                    series_x_tail=series_x if is_embedded else None,
-                    series_y_tail=series_y if is_embedded else None,
+                    geometry_x=geometry_source,
+                    geometry_y=geometry_target,
                 )
                 corr_y = result.correlation_y
                 corr_x = result.correlation_x
