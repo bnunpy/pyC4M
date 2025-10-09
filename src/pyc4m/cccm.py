@@ -230,6 +230,8 @@ def causalized_ccm(
         lib_idx = None
 
     base_indices = lib_idx if lib_idx is not None else np.arange(n_vectors, dtype=int)
+    candidate_mask = np.zeros(n_vectors, dtype=bool)
+    candidate_mask[base_indices] = True
 
     if abs(tp) >= n_vectors:
         raise ValueError(
@@ -250,28 +252,44 @@ def causalized_ccm(
 
     for j in range(num_skip - 1, n_vectors):
         if causal:
-            candidate_idx = base_indices[base_indices <= j]
+            upper_pos = np.searchsorted(base_indices, j, side="right")
         else:
-            candidate_idx = base_indices
+            upper_pos = base_indices.size
 
-        if exclusion_radius > 0 and candidate_idx.size:
-            candidate_idx = candidate_idx[
-                np.abs(candidate_idx - j) > exclusion_radius
-            ]
+        available = upper_pos
 
-        candidate_idx = candidate_idx[candidate_idx != j]
-        candidate_idx = np.ascontiguousarray(candidate_idx, dtype=int)
-        if candidate_idx.size == 0:
+        if exclusion_radius > 0:
+            lower_bound = j - exclusion_radius
+            upper_bound = j + exclusion_radius
+            lo = np.searchsorted(base_indices, lower_bound, side="left")
+            hi = np.searchsorted(base_indices, upper_bound, side="right")
+            if causal:
+                lo = min(lo, upper_pos)
+                hi = min(hi, upper_pos)
+            radius_count = max(0, hi - lo)
+            available -= radius_count
+        else:
+            j_pos = np.searchsorted(base_indices, j, side="left")
+            if j_pos < base_indices.size and base_indices[j_pos] == j:
+                if not causal or j_pos < upper_pos:
+                    available -= 1
+
+        if available <= 0:
             continue
 
-        needed = min(candidate_idx.size, nn + abs_tp)
+        max_index = j if causal else n_vectors - 1
+        needed = min(available, nn + abs_tp)
+        query_count = max(1, min(n_vectors - 1, needed + abs_tp))
+
         neighbours_y_global, distances_y = _query_tree_neighbors(
             tree_x,
             manifold_x,
             j,
-            candidate_idx,
+            candidate_mask,
             n_vectors,
-            needed + abs_tp,
+            query_count,
+            max_index,
+            exclusion_radius,
         )
         target_indices_y, distances_y = _apply_tp_to_neighbors(
             neighbours_y_global,
@@ -288,9 +306,11 @@ def causalized_ccm(
             tree_y,
             manifold_y,
             j,
-            candidate_idx,
+            candidate_mask,
             n_vectors,
-            needed + abs_tp,
+            query_count,
+            max_index,
+            exclusion_radius,
         )
         target_indices_x, distances_x = _apply_tp_to_neighbors(
             neighbours_x_global,
@@ -353,13 +373,15 @@ def _query_tree_neighbors(
     tree: cKDTree,
     manifold: np.ndarray,
     query_index: int,
-    candidate_indices: np.ndarray,
+    candidate_mask: np.ndarray,
     n_vectors: int,
     requested: int,
+    max_index: int,
+    exclusion_radius: int,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Query a KDTree and filter results to the allowed candidate indices."""
 
-    if candidate_indices.size == 0:
+    if requested <= 0:
         return np.empty(0, dtype=int), np.empty(0, dtype=float)
 
     request = min(n_vectors - 1, max(requested, 1))
@@ -374,21 +396,33 @@ def _query_tree_neighbors(
             indices = indices.flatten()
             distances = distances.flatten()
 
-        match_positions = np.searchsorted(candidate_indices, indices, side="left")
-        selection = np.zeros(indices.shape, dtype=bool)
-        valid = match_positions < candidate_indices.size
-        if np.any(valid):
-            selection[valid] = candidate_indices[match_positions[valid]] == indices[valid]
+        in_bounds = indices < n_vectors
+        if not np.any(in_bounds):
+            filtered_indices = np.empty(0, dtype=int)
+            filtered_distances = np.empty(0, dtype=float)
+        else:
+            indices = indices[in_bounds]
+            distances = distances[in_bounds]
 
-        filtered_indices = indices[selection]
-        filtered_distances = distances[selection]
+            selection = candidate_mask[indices]
+            if max_index < n_vectors - 1:
+                selection &= indices <= max_index
+            if exclusion_radius > 0:
+                selection &= np.abs(indices - query_index) > exclusion_radius
+            selection &= indices != query_index
+
+            filtered_indices = indices[selection]
+            filtered_distances = distances[selection]
 
         if filtered_indices.size >= requested or request >= n_vectors - 1:
             break
 
         request = min(n_vectors - 1, request * 2)
 
-    return filtered_indices.astype(int), filtered_distances.astype(float)
+    return (
+        filtered_indices[:requested].astype(int),
+        filtered_distances[:requested].astype(float),
+    )
 
 
 def _apply_tp_to_neighbors(

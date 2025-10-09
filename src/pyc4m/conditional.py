@@ -8,7 +8,7 @@ from typing import Dict, List, Sequence, Tuple
 import numpy as np
 from numpy.typing import ArrayLike
 
-from .cccm import VariableGeometry, causalized_ccm
+from .cccm import VariableGeometry, causalized_ccm, prepare_variable_geometry
 
 
 @dataclass
@@ -183,6 +183,26 @@ def conditional_ccm(
                     f"({geom.manifold.shape[0]}) does not match latent length {latent_length}"
                 )
 
+    if geometries is not None:
+        geometry_map: Dict[int, VariableGeometry] = geometries
+    else:
+        geometry_map = {}
+        if embedded_mode:
+            for idx in range(n_variables):
+                geometry_map[idx] = prepare_variable_geometry(
+                    tau=tau_value,
+                    e_dim=e_dim,
+                    manifold=manifolds[idx],
+                    tail=tails[idx],
+                )
+        else:
+            for idx in range(n_variables):
+                geometry_map[idx] = prepare_variable_geometry(
+                    tau=tau_value,
+                    e_dim=e_dim,
+                    series=data_matrix[:, idx],
+                )
+
     lib_idx: np.ndarray | None
     if library_indices is not None:
         lib_idx = np.asarray(list(library_indices), dtype=int)
@@ -202,8 +222,8 @@ def conditional_ccm(
 
     for i in range(n_variables - 1):
         for j in range(i + 1, n_variables):
-            geom_i = geometries[i] if geometries is not None else None
-            geom_j = geometries[j] if geometries is not None else None
+            geom_i = geometry_map.get(i)
+            geom_j = geometry_map.get(j)
 
             series_i = tails[i] if embedded_mode else data_matrix[:, i]
             series_j = tails[j] if embedded_mode else data_matrix[:, j]
@@ -215,13 +235,15 @@ def conditional_ccm(
                 exclusion_radius=exclusion_radius,
                 causal=causal,
                 library_indices=lib_idx,
-                geometry_x=geom_i,
-                geometry_y=geom_j,
             )
 
+            if geom_i is not None:
+                kwargs["geometry_x"] = geom_i
             if embedded_mode and geom_i is None:
                 kwargs["manifold_x"] = manifolds[i]
                 kwargs["series_x_tail"] = tails[i]
+            if geom_j is not None:
+                kwargs["geometry_y"] = geom_j
             if embedded_mode and geom_j is None:
                 kwargs["manifold_y"] = manifolds[j]
                 kwargs["series_y_tail"] = tails[j]
